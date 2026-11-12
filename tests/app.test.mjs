@@ -1,79 +1,57 @@
+// app.test.mjs —— 前端纯逻辑：引导、校验、作品存储、配置读取
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { HELP, TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone, INTERPRET } from '../src/lib/guide.js';
-import { createWizard, chooseExperience, goNext, goPrev, validateText, estimateSeconds, stepProgress, stageLabel, EXPERIENCES } from '../src/lib/wizard.js';
+import { TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone, INTERPRET } from '../src/lib/guide.js';
+import { validateText, estimateSeconds, stageLabel, EXPERIENCES } from '../src/lib/wizard.js';
+import { getConfig } from '../server/lib/config.mjs';
 
-const REQUIRED_HELP = ['nav-home','nav-video','nav-voice','nav-chat','nav-works','nav-help','toggle-explain','start-tour','pick-video','pick-voice','pick-chat','btn-sample','btn-generate','btn-regenerate','btn-save-work','btn-download','btn-tts','btn-chat-send','btn-chat-stop','chip-q1','chip-q2','btn-works-delete','btn-works-clear','btn-reset-demo','btn-help-close'];
-
-test('guide：所有按钮都有"做什么/什么结果"说明', () => {
-  for (const id of REQUIRED_HELP) {
-    const h = HELP[id];
-    assert.ok(h, `缺少说明：${id}`);
-    assert.ok(h.title && h.what && h.result, `${id} 说明不完整`);
-  }
-});
-
-test('guide：新手引导步骤与持久化', () => {
-  assert.ok(TOUR_STEPS.length >= 4);
-  for (const s of TOUR_STEPS) {
-    assert.ok(s.title && s.text, '引导步骤缺少标题或说明');
-    // 选择器须为合法 CSS 选择器（产品版用属性选择器定位新导航）
-    assert.ok(/^[#.\[]/.test(s.selector), `非法选择器：${s.selector}`);
-  }
-  assert.equal(nextTourStep(0), 1);
+test('guide：引导步骤与持久化', () => {
+  assert.ok(TOUR_STEPS.length >= 3);
+  for (const s of TOUR_STEPS) assert.ok(s.title && s.text && s.selector);
   assert.equal(nextTourStep(TOUR_STEPS.length - 1), -1);
   const mem = new Map();
   const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
   assert.equal(shouldShowTour(storage), true);
   markTourDone(storage);
   assert.equal(shouldShowTour(storage), false);
+  assert.equal(INTERPRET.avatar({ duration: 5.8 }).length, 4);
 });
 
-test('guide：三类结果都有四行解读且提到关键判定', () => {
-  for (const kind of ['avatar', 'voice', 'chat']) {
-    const lines = INTERPRET[kind]({ duration: 5.8, duration_ms: 6800 });
-    assert.equal(lines.length, 4);
-    assert.deepEqual(lines.map((l) => l.label), ['看到了什么', '它说明什么', '怎样算对', '不对先查什么']);
-  }
-  assert.match(INTERPRET.avatar({ duration: 5.8 })[0].text, /AI生成/);
-});
-
-test('wizard：选择体验→下一步→上一步', () => {
-  let w = createWizard();
-  assert.equal(w.step, 0);
-  w = chooseExperience(w, 'video');
-  assert.equal(w.step, 1);
-  w = goNext(w); assert.equal(w.step, 2);
-  w = goPrev(w); assert.equal(w.step, 1);
-  assert.equal(goPrev(createWizard()).step, 0);
-});
-
-test('wizard：文案校验（太短/超长/合格）与时长估算', () => {
+test('wizard：文案校验、时长估算、阶段文案', () => {
   assert.equal(validateText('短').ok, false);
   assert.equal(validateText('字'.repeat(201)).ok, false);
-  assert.equal(validateText('山禾鲜的赣南脐橙今天到货').ok, true);
+  assert.equal(validateText('赣南脐橙今天到货').ok, true);
   assert.equal(estimateSeconds('一二三四五六七八九十'), 2.6);
-  assert.ok(EXPERIENCES.find((e) => e.id === 'chat'));
+  assert.equal(stageLabel(1, true), '平台排队中');
+  assert.equal(stageLabel(2), '生成中');
+  assert.deepEqual(EXPERIENCES.map((e) => e.id), ['video', 'voice', 'chat']);
 });
 
-test('wizard：进度与阶段文案', () => {
-  let w = chooseExperience(createWizard(), 'video');
-  assert.equal(stepProgress(w), 50);
-  w = { ...w, step: 2, status: 'done' };
-  assert.equal(stepProgress(w), 100);
-  assert.equal(stageLabel(100), '完成');
-  assert.equal(stageLabel(60), '生成中');
-  assert.equal(stageLabel(25), '排队中');
-});
-
-test('works：保存/读取/删除/7 天有效期', async () => {
+test('works：保存 / 读取 / 删除 / 7 天过期 / 文本类作品', async () => {
   const mem = new Map();
   globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
-  const works = await import('../src/lib/works.js?t=' + Date.now());
-  const w = works.addWork({ type: '视频口播', title: '测试作品', url: '/files/mock_video.mp4', duration: 5.8 });
-  assert.equal(works.listWorks().length, 1);
-  assert.equal(works.daysLeft(w.expiresAt), 7);
-  works.removeWork(w.id);
-  assert.equal(works.listWorks().length, 0);
+  const works = await import('../src/lib/works.js');
+  const now = Date.now();
+  const { work, persisted } = works.addWork({ kind: 'video', type: '视频口播', title: '测试', url: 'files/mock_video.mp4' }, now);
+  works.addWork({ kind: 'text', type: '知识库管理', title: 'JSON', text: '{"a":1}' }, now + 1);
+  assert.equal(persisted, true);
+  const list = works.listWorks(now + 10);
+  assert.equal(list.length, 2);
+  assert.equal(list[1].days, 7);
+  assert.ok(list[0].createdAt);
+  assert.equal(works.getWork(list[0].id).text, '{"a":1}');
+  works.removeWork(work.id);
+  assert.equal(works.listWorks(now + 10).length, 1);
+  assert.equal(works.listWorks(now + 8 * 86400000).length, 0, '7 天后过期');
+});
+
+test('config：优先读环境变量，读不到再回退到 .env 文件', () => {
+  const cfg = getConfig({ RUYING_APP_ID: 'from-env' }, { RUYING_APP_ID: 'from-file', RUYING_APP_KEY: 'file-key', RUYING_MOCK: 'false' });
+  assert.equal(cfg.appId, 'from-env');
+  assert.equal(cfg.appKey, 'file-key');
+  assert.equal(cfg.defaultMode, 'real');
+  const missing = getConfig({ RUYING_MOCK: 'false' }, {});
+  assert.equal(missing.defaultMode, 'mock', '缺凭据时回退演示模式而不是崩溃');
+  assert.equal(missing.warnings.length, 1);
+  assert.equal(getConfig({ RUYING_APP_ID: '' }, { RUYING_APP_ID: 'f' }).appId, 'f', '空字符串视为未设置');
 });

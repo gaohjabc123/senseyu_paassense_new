@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// check-leaks.mjs —— 第1章：密钥/隐私泄露扫描（跨平台，只用 Node 内置模块）
+// check-leaks.mjs —— 密钥/隐私泄露扫描（跨平台，只用 Node 内置模块）
 // 运行：npm run check:leaks
 // 原则：脚本本身也不能把明文打印到终端——所有命中值统一打码为 前4位****后4位
 import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const PUBLIC_DIR = path.join(ROOT, 'public');
+const PUBLIC_DIR = path.join(ROOT, 'reports'); // 不放 public/，避免被打包进 dist
 const REPORT_FILE = path.join(PUBLIC_DIR, 'leak-report.json');
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.dsh-profile-backup']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'reports', 'data']);
 const SKIP_FILES = new Set(['package-lock.json', 'env-report.json', 'leak-report.json', '.DS_Store']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.html', '.css', '.json', '.md', '.txt', '.example', '.yml', '.yaml', '.env.example']);
 // 不扫描 .env 本身（本地密钥文件），它由 check-env 的"是否被 git 忽略"负责
@@ -87,7 +87,7 @@ const report = {
 fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 fs.writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2) + '\n', 'utf8');
 
-console.log('\n如影开发工作台 · 泄露扫描');
+console.log('\n如影 AI 能力开放平台 · 泄露扫描');
 console.log('='.repeat(64));
 if (!findings.length) {
   console.log('✔ 未发现密钥 / 邮箱 / 手机号 / 令牌明文');

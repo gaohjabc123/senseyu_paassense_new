@@ -31,7 +31,6 @@ export const CAPABILITIES = [
       output: 'video', submit: '生成视频',
       fields: [
         { key: 'text', label: '口播文案', type: 'textarea', default: '新款智能手表今天上市，支持全天心率监测与运动记录，欢迎了解。', placeholder: '输入要播报的文字…', hint: '4～200 字，字数决定视频时长' },
-        { key: 'voice', label: '音色', type: 'select', default: '0', options: [['0', '亲和（中文女声）'], ['1', '沉稳（中文男声）']] },
       ],
       notes: '演示环境用本地模拟素材；真实模式需要已训练的形象 ID 与音色 QID。',
       mockTitle: '数字人口播成片',
@@ -45,10 +44,10 @@ export const CAPABILITIES = [
     experience: {
       output: 'video', submit: '生成数字人视频',
       fields: [
-        { key: 'imageUrl', label: '人像图片 URL', type: 'text', default: 'https://cdn.example.com/photo.png', placeholder: 'https://…' },
-        { key: 'audioUrl', label: '音频 URL', type: 'text', default: 'https://cdn.example.com/sound.mp3', placeholder: 'https://…' },
-        { key: 'prompt', label: '画面描述', type: 'text', default: '夏日海滩场景 | Summer beach scene' },
-        { key: 'duration', label: '时长（秒）', type: 'number', default: '10' },
+        { key: 'imageUrl', label: '人像图片地址', type: 'text', default: '', placeholder: 'https://…/portrait.png', hint: '真实环境必填，需可公网访问；演示环境可留空' },
+        { key: 'audioUrl', label: '音频地址', type: 'text', default: '', placeholder: 'https://…/voice.mp3', hint: '真实环境必填，需可公网访问；演示环境可留空' },
+        { key: 'prompt', label: '视频名称', type: 'text', default: '图片数字人示例' },
+        { key: 'duration', label: '时长（秒）', type: 'number', default: '10', hint: '整数秒，至少 5 秒' },
       ],
       notes: '演示环境忽略 URL 直接返回样例成片；真实模式需可公网访问的图片与音频地址。',
       mockTitle: '图片数字人成片',
@@ -75,18 +74,15 @@ export const CAPABILITIES = [
   // ---------- 语音处理 ----------
   {
     id: 'voice-tts', group: 'voice', name: '语音合成 TTS', tag: '核心', status: 'ready',
-    desc: '文字转语音，可调音色、语速、音量、语调', scene: '配音 / 无障碍朗读',
-    api: 'TTS 能力对接', doc: '语音处理',
-    realApi: '/api/2dvh/v1/material/voice/tts', billable: false,
+    desc: '文字转语音，使用平台音色（QID）合成可下载的音频', scene: '配音 / 无障碍朗读',
+    api: 'POST /api/voice/v3/tts/request', doc: '语音处理',
+    realApi: '/api/voice/v3/tts/request', billable: false,
     experience: {
       output: 'audio', submit: '合成语音',
       fields: [
         { key: 'text', label: '合成文本', type: 'textarea', default: '大家好，欢迎使用如影 AI 能力开放平台。', hint: '4～200 字' },
-        { key: 'voice', label: '音色', type: 'select', default: '0', options: [['0', '亲和（中文女声）'], ['1', '沉稳（中文男声）']] },
-        { key: 'speed', label: '语速（0.5～2）', type: 'number', default: '1' },
-        { key: 'volume', label: '音量（1～400）', type: 'number', default: '100' },
       ],
-      notes: '真实模式使用平台发音人 ID；演示环境返回本地样例音频。',
+      notes: '真实环境使用服务端配置的平台音色（QID）合成；演示环境返回本地样例音频。',
       mockTitle: '合成语音',
     },
   },

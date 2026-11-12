@@ -1,0 +1,16 @@
+# 如影 AI 能力开放平台 v2.4.0 —— 服务端预构建镜像
+# dist/ 已在本地构建好（含 public/brand 双 logo），容器内不再跑 npm，
+# 因此不需要访问 npm registry（新服务器访问 npm 很慢）。
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production PORT=8080
+COPY package.json ./
+COPY dist ./dist
+COPY server ./server
+COPY src/lib/capabilities.js ./src/lib/capabilities.js
+COPY scripts/admin.mjs ./scripts/admin.mjs
+RUN mkdir -p /app/data && chown -R node:node /app/data
+USER node
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1
+CMD ["node", "--disable-warning=ExperimentalWarning", "server/index.mjs"]

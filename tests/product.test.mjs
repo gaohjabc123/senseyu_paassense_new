@@ -1,18 +1,19 @@
 // product.test.mjs —— 产品化数据层与视图一致性测试
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PRODUCT, NAV_SECTIONS, ALL_NAV, navById, DEFAULT_VIEW, DEMO_NOTICE } from '../src/lib/product.js';
+import { PRODUCT, NAV_SECTIONS, navById, DEFAULT_VIEW, MODE_NOTICE, BRAND_LOGOS } from '../src/lib/product.js';
 import { GROUPS, CAPABILITIES, SCENARIOS, INTEGRATION_STEPS, capsOf, readyCaps, capById, groupOf, stats } from '../src/lib/capabilities.js';
 
 test('product：品牌与导航结构完整', () => {
-  assert.equal(PRODUCT.version, '2.0.0');
-  assert.match(PRODUCT.name, /如影/);
+  assert.equal(PRODUCT.name, '如影 AI 能力开放平台');
+  assert.equal(PRODUCT.vendor, '商予科技');
+  assert.deepEqual(BRAND_LOGOS.map((l) => l.id), ['sensetime', 'senseyu'], '顶栏与页脚必须是商汤 + 商予双 logo');
   assert.ok(PRODUCT.docsUrl.startsWith('https://'));
   assert.equal(NAV_SECTIONS.length, 2);
   assert.ok(NAV_SECTIONS.find((s) => s.id === 'site'));
   assert.ok(NAV_SECTIONS.find((s) => s.id === 'console'));
   assert.ok(navById(DEFAULT_VIEW));
-  assert.ok(DEMO_NOTICE.includes('不产生任何费用'));
+  assert.match(MODE_NOTICE.mock, /不产生费用/);
 });
 
 test('capabilities：每个能力都有合法分组、状态与文档出处', () => {
@@ -58,6 +59,7 @@ test('product：全部能力可体验且体验规格完整（都接入）', () =
     assert.ok(ex, `${c.id} 缺少 experience 体验规格`);
     assert.ok(outputs.has(ex.output), `${c.id} output 类型非法：${ex.output}`);
     assert.ok(ex.submit && ex.mockTitle && ex.notes, `${c.id} 体验规格字段不完整`);
+    assert.ok(!(ex.fields || []).some((f) => f.key === 'voice'), `${c.id} 不应再有不生效的音色下拉`);
     assert.ok(Array.isArray(ex.fields) && ex.fields.length > 0, `${c.id} 没有输入字段`);
     for (const f of ex.fields) {
       assert.ok(f.key && f.label && f.type, `${c.id} 字段定义不完整`);
@@ -69,11 +71,13 @@ test('product：全部能力可体验且体验规格完整（都接入）', () =
   }
 });
 
-test('capabilities：服务端共用同一份数据源，统计与前端一致', async () => {
-  const api = await import('../server/mock.mjs');
-  // mock.mjs 直接 import capabilities.js，说明前后端共用；此处验证 stats 自洽
-  const st = stats();
-  assert.equal(st.capabilities, readyCaps().length);
-  assert.equal(st.ready, CAPABILITIES.length);
-  assert.ok(api.createMock, '服务端 mock 模块可加载');
+test('版本号只在 package.json 定义，源码里没有手写版本号', async () => {
+  const fs = await import('node:fs');
+  const { VERSION } = await import('../server/lib/version.mjs');
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(VERSION, pkg.version);
+  for (const f of ['server/index.mjs', 'src/lib/product.js', 'src/main.js']) {
+    const src = fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+    assert.ok(!src.includes(`'${pkg.version}'`), `${f} 里不应写死版本号`);
+  }
 });

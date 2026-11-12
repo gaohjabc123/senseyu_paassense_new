@@ -1,9 +1,9 @@
-// config.mjs —— 读取 .env（自解析，不依赖 dotenv），合并默认值；mock 模式不读真实密钥
+// config.mjs —— 运行配置：优先读 process.env，读不到再回退到项目根目录 .env（自解析，不依赖 dotenv）
+// 密钥只在服务端使用，任何字段都不会原样下发前端。
 import fs from 'node:fs';
 import path from 'node:path';
-import { md5Hex } from './sign.mjs';
 
-const ROOT = path.resolve(import.meta.dirname, '..', '..');
+export const ROOT = path.resolve(import.meta.dirname, '..', '..');
 
 export function loadDotEnv(file = path.join(ROOT, '.env')) {
   if (!fs.existsSync(file)) return {};
@@ -18,41 +18,56 @@ export function loadDotEnv(file = path.join(ROOT, '.env')) {
   return out;
 }
 
-export function getConfig(env = {}) {
-  const file = loadDotEnv();
-  const pick = (k, d) => (env[k] ?? file[k] ?? d);
-  const mock = String(pick('RUYING_MOCK', 'true')).toLowerCase() !== 'false';
-  const mode = mock ? 'mock' : 'real';
-  const cfg = {
-    root: ROOT,
-    mode,
-    mock,
-    proxyPort: Number(pick('PROXY_PORT', 8787)),
-    mockPort: Number(pick('MOCK_PORT', 8788)),
-    // mock 模式用课程占位密钥（假的，写死在配置里只用于本地签名练习；真实模式必须来自 .env")
-    appId: mock ? 'mock-app-id-0001' : String(pick('RUYING_APP_ID', '')),
-    appKey: mock ? 'mock-app-key-0001-fake' : String(pick('RUYING_APP_KEY', '')),
-    baseUrl: mock ? `http://127.0.0.1:${Number(pick('MOCK_PORT', 8788))}` : String(pick('RUYING_BASE_URL', 'https://aigc.softsugar.com')),
-    tsUnit: String(pick('SIGN_TS_UNIT', 'ms')),
-    allowBillable: String(pick('ALLOW_BILLABLE', 'false')).toLowerCase() === 'true',
-    mockTsSkewSec: Number(pick('MOCK_TS_SKEW_SEC', 0)),
-    mockRefreshWindowMs: Number(pick('MOCK_REFRESH_WINDOW_MS', 3 * 60 * 60 * 1000)),
-    mockTaskMs: Number(pick('MOCK_TASK_MS', 6000)),
-    mockVoiceReadyMs: Number(pick('MOCK_VOICE_READY_MS', 1200)),
-    mockSseDelayMs: Number(pick('MOCK_SSE_DELAY_MS', 15)),
-    // 课程演示用 AuthKey：运行时生成，源码里不写死任何密钥；学生练习可自己改
-    demoAuthKey: `practice-${md5Hex('callback-demo-seed').slice(0, 6)}`,
-    // 浏览器允许的来源（本地开发）
-    allowOrigins: [`http://127.0.0.1:5173`, `http://localhost:5173`, `http://127.0.0.1:4173`],
+/**
+ * @param {object} env   环境变量来源（默认 process.env）
+ * @param {object} file  .env 文件内容（默认读取项目根目录 .env；测试可传 {} 隔离）
+ */
+export function getConfig(env = process.env, file = loadDotEnv()) {
+  const pick = (k, d = '') => {
+    const v = env[k];
+    if (v !== undefined && v !== '') return String(v);
+    const f = file[k];
+    if (f !== undefined && f !== '') return String(f);
+    return d;
   };
-  if (!cfg.mock) {
-    const missing = [];
-    if (!cfg.appId) missing.push('RUYING_APP_ID');
-    if (!cfg.appKey) missing.push('RUYING_APP_KEY');
-    if (missing.length) throw new Error(`真实模式缺少配置：${missing.join('、')}。请检查 .env 或改回 RUYING_MOCK=true。`);
-  }
-  if (!['ms', 's'].includes(cfg.tsUnit)) throw new Error(`SIGN_TS_UNIT 只能是 ms 或 s，当前：${cfg.tsUnit}`);
-  return cfg;
+  const appId = pick('RUYING_APP_ID');
+  const appKey = pick('RUYING_APP_KEY');
+  const wantReal = pick('RUYING_MOCK', 'true').toLowerCase() === 'false';
+  const placeholder = (v) => !v || /^mock[-_]/i.test(v);
+  const hasCredentials = !placeholder(appId) && !placeholder(appKey);
+
+  const warnings = [];
+  if (wantReal && !hasCredentials) warnings.push('RUYING_MOCK=false 但缺少 RUYING_APP_ID / RUYING_APP_KEY，已回退到演示模式');
+  const tsUnit = pick('SIGN_TS_UNIT', 'ms');
+  if (!['ms', 's'].includes(tsUnit)) throw new Error(`SIGN_TS_UNIT 只能是 ms 或 s，当前：${tsUnit}`);
+
+  return {
+    root: ROOT,
+    defaultMode: wantReal && hasCredentials ? 'real' : 'mock',
+    realAvailable: hasCredentials,
+    warnings,
+    appId,
+    appKey,
+    baseUrl: pick('RUYING_BASE_URL', 'https://aigc.softsugar.com').replace(/\/+$/, ''),
+    tsUnit,
+    ttsQid: pick('RUYING_TTS_QID'),
+    avatarImageUrl: pick('RUYING_AVATAR_IMAGE_URL'),
+    allowBillable: pick('ALLOW_BILLABLE', 'false').toLowerCase() === 'true',
+    deepseekKey: pick('DEEPSEEK_API_KEY'),
+    deepseekBaseUrl: pick('DEEPSEEK_BASE_URL', 'https://api.deepseek.com').replace(/\/+$/, ''),
+    deepseekModel: pick('DEEPSEEK_MODEL', 'deepseek-chat'),
+    kbDir: pick('KB_DIR', path.join(ROOT, 'data')),
+    dbFile: pick('DB_FILE', path.join(pick('KB_DIR', path.join(ROOT, 'data')), 'ruying.db')),
+    dataEncryptionKey: pick('DATA_ENCRYPTION_KEY'),
+    superAdminUsername: pick('SUPER_ADMIN_USERNAME'),
+    superAdminPassword: pick('SUPER_ADMIN_PASSWORD'),
+    publicDemo: pick('PUBLIC_DEMO', 'true').toLowerCase() !== 'false',
+    logRetentionDays: Number(pick('LOG_RETENTION_DAYS', 180)),
+    cookieSecure: pick('COOKIE_SECURE', 'auto'),
+    mockTaskMs: Number(pick('MOCK_TASK_MS', 1400)),
+    mockSseDelayMs: Number(pick('MOCK_SSE_DELAY_MS', 15)),
+    requestTimeoutMs: Number(pick('UPSTREAM_TIMEOUT_MS', 20000)),
+  };
 }
 
 export const BILLABLE_PATHS = [

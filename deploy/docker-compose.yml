@@ -2,11 +2,39 @@ services:
   experience:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
-    image: yunfan-digital-human:1.0.0
+      dockerfile: deploy/Dockerfile.server
+    image: yunfan-digital-human:2.4.0
+    container_name: paas-experience
     ports:
       - "8080:8080"
+    env_file:
+      - ../.env
+    volumes:
+      - ../.env:/app/.env:ro
+      - ruying-data:/app/data
     environment:
       PORT: "8080"
-      MOCK_TASK_MS: "1400"   # 演示用任务耗时；客户体验可保持 1000~2000
+      MOCK_TASK_MS: "1400"
     restart: unless-stopped
+    networks:
+      - paas-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: paas-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - experience
+    restart: unless-stopped
+    networks:
+      - paas-net
+
+volumes:
+  ruying-data:
+
+networks:
+  paas-net:
+    driver: bridge

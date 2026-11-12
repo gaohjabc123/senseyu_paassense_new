@@ -1,16 +1,22 @@
 {
   "name": "ruying-ai-platform",
-  "version": "2.0.0",
+  "version": "2.4.0",
   "private": true,
   "type": "module",
-  "description": "如影 AI 能力开放平台 — 面向客户与合作方的数字人 PaaS 能力门户（官网 + 工作台，演示/真实双模式）",
+  "description": "如影 AI 能力开放平台 —— 商予科技数字人 PaaS 能力门户（官网 + 工作台，演示/真实双模式）",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
-    "start": "node server/index.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "start": "node --disable-warning=ExperimentalWarning server/index.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.mjs",
     "check:leaks": "node scripts/check-leaks.mjs",
-    "ci": "node scripts/ci.mjs"
+    "ci": "node scripts/ci.mjs",
+    "admin": "node --disable-warning=ExperimentalWarning scripts/admin.mjs"
   },
-  "devDependencies": { "vite": "^8.3.7" }
+  "devDependencies": {
+    "vite": "^8.3.7"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
 }
