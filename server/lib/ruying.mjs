@@ -6,14 +6,15 @@
 //   · 任务查询：POST /api/2dvh/v1/task/info，请求体 {"ids":[...]}
 //   · duration 必须是整数秒且 ≥ 5
 //
-// ⚠ 本仓库基线（2.0.0）不含线上 2.1.5 的实现代码。下方 PLATFORM 中标注「待核对」的字段名
-//   （TTS 请求/结果的字段、返回体里的 id / 地址字段）是按说明推断的，合并前请与线上代码逐项核对。
+// ⚠ 本仓库基线（2.0.0）不含线上 2.1.5 的实现代码。TTS 请求/结果的字段名已按线上 2.1.5
+//   实测口径修正（query 而非 text、request_id 而非 taskId，见 API_NOTES §2）；其余「待核对」
+//   处合并前仍请与线上代码逐项核对。
 import { isBillable } from './config.mjs';
 import { AppError, E, toAppError } from './errors.mjs';
 
 export const PLATFORM = {
-  ttsRequest: { path: '/api/voice/v3/tts/request', body: (text, qid) => ({ text, qid }) },          // 待核对：字段名
-  ttsResult: { path: '/api/voice/v3/tts/result', body: (taskId) => ({ taskId }) },                   // 待核对：字段名
+  ttsRequest: { path: '/api/voice/v3/tts/request', body: (text, qid) => ({ qid, query: text, timeout: 30000 }) },
+  ttsResult: { path: '/api/voice/v3/tts/result', body: (requestId) => ({ request_id: requestId }) },
   imageAvatar: {
     path: '/api/2dvh/v1/material/single/image/video/create',
     body: ({ videoName, imageUrl, audioUrl, duration }) => ({ videoName, param: JSON.stringify({ imageUrl, audioUrl, duration }) }),
@@ -91,18 +92,23 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
     post,
 
     /** TTS：提交 → 轮询结果，返回 { audio_url, duration_ms } */
-    async tts(text, { maxWaitMs = 60000, intervalMs = 1000 } = {}) {
+    async tts(text, { maxWaitMs = 60000, intervalMs = 1500 } = {}) {
       if (!cfg.ttsQid) throw new AppError({ code: 'TTS_NOT_CONFIGURED', message: '真实环境未配置配音音色。', hint: '需要管理员在服务端配置 RUYING_TTS_QID。', action: 'config' });
       const created = await post(PLATFORM.ttsRequest.path, PLATFORM.ttsRequest.body(text, cfg.ttsQid));
-      const taskId = typeof created === 'object' ? pick(created, ['taskId', 'id', 'requestId']) : created;
-      if (!taskId) throw E.upstream(400, '配音任务未返回编号', 'tts request without taskId');
+      // 平台返回 data: { status, request_id, result }；status 0=已完成（result 里直接有 audio_url）、1000=处理中
+      if (created && Number(created.status) === 0 && created.result?.audio_url) {
+        return { audio_url: created.result.audio_url, duration_ms: Number(created.result.duration_ms) || 0 };
+      }
+      const requestId = typeof created === 'object' ? pick(created, ['request_id', 'requestId', 'taskId', 'id']) : created;
+      if (!requestId) throw E.upstream(400, '配音任务未返回编号', 'tts request without taskId');
       const until = Date.now() + maxWaitMs;
       while (Date.now() < until) {
-        const r = await post(PLATFORM.ttsResult.path, PLATFORM.ttsResult.body(taskId));
-        const url = pick(r, ['audioUrl', 'audio_url', 'url', 'fileUrl']);
+        const r = await post(PLATFORM.ttsResult.path, PLATFORM.ttsResult.body(requestId));
+        const result = r?.result || {};
+        const url = result.audio_url || pick(r, ['audioUrl', 'audio_url', 'url', 'fileUrl']);
         const status = Number(pick(r, ['status']));
         if (url) {
-          const ms = Number(pick(r, ['durationMs', 'duration_ms'])) || (Number(pick(r, ['duration'])) * 1000) || 0;
+          const ms = Number(result.duration_ms) || Number(pick(r, ['durationMs', 'duration_ms'])) || (Number(pick(r, ['duration'])) * 1000) || 0;
           return { audio_url: url, duration_ms: ms };
         }
         if (status === 9 || status === 3) throw E.upstream(400, '配音生成失败', `tts status=${status}`);
