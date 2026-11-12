@@ -18,7 +18,7 @@ main:focus { outline: none; }
 
 /* ============ 顶栏（只渲染一次） ============ */
 .topbar { position: sticky; top: 0; z-index: 40; background: rgba(255,255,255,.94); backdrop-filter: blur(12px); border-bottom: 1px solid var(--gray-200); }
-.topbar__inner { max-width: 1400px; margin: 0 auto; height: var(--topbar-h); padding: 0 var(--sp-6); display: flex; align-items: center; gap: var(--sp-3); }
+.topbar__inner { max-width: 1400px; margin: 0 auto; height: var(--topbar-h); padding: 0 var(--sp-8); display: flex; align-items: center; gap: var(--sp-3); }
 .topbar__spacer { flex: 1; }
 .brand { display: flex; align-items: center; gap: 14px; color: inherit; min-width: 0; }
 .brand__text { display: flex; flex-direction: column; line-height: 1.25; padding-left: 14px; border-left: 1px solid var(--gray-200); min-width: 0; }
@@ -55,6 +55,19 @@ main:focus { outline: none; }
 .nav-item.is-active { background: var(--brand-50); color: var(--brand-700); font-weight: 650; }
 .nav-item__icon { width: 18px; text-align: center; font-size: 15px; }
 .nav-item em { margin-left: auto; font-style: normal; font-size: 11px; background: var(--brand-100); color: var(--brand-700); padding: 1px 7px; border-radius: var(--radius-pill); }
+
+/* 侧边导航折叠：只留图标，点 » 展开 */
+.nav-collapse { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 11px; border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm); background: #fff; color: var(--gray-500); font-size: 12px; font-weight: 600; cursor: pointer; }
+.nav-collapse:hover { background: var(--gray-50); color: var(--gray-900); }
+.nav-collapse__icon { font-size: 14px; line-height: 1; }
+.console-shell.nav-collapsed .sidenav { width: 60px; padding: var(--sp-6) var(--sp-2); }
+.console-shell.nav-collapsed .nav-group__label,
+.console-shell.nav-collapsed .nav-item span:not(.nav-item__icon),
+.console-shell.nav-collapsed .nav-item em,
+.console-shell.nav-collapsed .nav-collapse span:not(.nav-collapse__icon) { display: none; }
+.console-shell.nav-collapsed .nav-item { justify-content: center; padding: 9px 0; }
+.console-shell.nav-collapsed .nav-collapse { justify-content: center; padding: 8px 0; }
 
 .console-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-8) 0 var(--sp-6); flex-wrap: wrap; }
 .console-bar h1 { font-size: var(--text-2xl); letter-spacing: -.6px; }
@@ -159,7 +172,7 @@ main:focus { outline: none; }
 .cap-table { background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius-md); }
 .cap-table td { font-size: 13px; }
 .cap-table b { color: var(--gray-900); }
-.tag { margin-left: 6px; font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--accent-50); color: var(--accent-600); font-weight: 600; }
+.tag { display: inline-block; white-space: nowrap; margin-left: 6px; font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--accent-50); color: var(--accent-600); font-weight: 600; }
 .muted { color: var(--gray-500); }
 .cell-scene { display: block; margin-top: 4px; color: var(--gray-500); font-size: 12px; }
 .code-sm { font-size: 11px; color: var(--brand-700); background: var(--brand-50); padding: 2px 6px; border-radius: 6px; word-break: break-all; }

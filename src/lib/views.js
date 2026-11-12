@@ -251,6 +251,9 @@ export function sidenav(s) {
         ${it.id === 'tasks' && s.works.length ? `<em aria-label="${s.works.length} 个作品">${s.works.length}</em>` : ''}
       </a>`).join('')}
     </div>`).join('')}
+    <button class="nav-collapse" type="button" data-action="nav-collapse" title="${s.navCollapsed ? '展开菜单' : '收起菜单'}">
+      <span class="nav-collapse__icon" aria-hidden="true">${s.navCollapsed ? '»' : '«'}</span><span>${s.navCollapsed ? '' : '收起菜单'}</span>
+    </button>
   </nav>`;
 }
 

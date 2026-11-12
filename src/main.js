@@ -19,6 +19,7 @@ const MAX_UPLOAD_BYTES = 1024 * 1024;
 const state = {
   view: DEFAULT_VIEW,
   mode: getMode(),
+  navCollapsed: (() => { try { return localStorage.getItem('ruying-nav-collapsed') === '1'; } catch { return false; } })(),
   config: null, configError: null,
   modeSwitching: false, modeError: null,
   capFilter: 'all',
@@ -96,7 +97,7 @@ function render() {
   viewRoot.className = `view-root ${isSite ? 'view-root--site' : 'view-root--console'}`;
   viewRoot.innerHTML = isSite
     ? `<main id="main" tabindex="-1" class="site-main">${banner}${pageHtml()}</main>`
-    : `<div class="console-shell">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${V.consoleBar(state, CONSOLE_TITLE[state.view] || ADMIN_ROUTES[state.view]?.title || '工作台')}${pageHtml()}</main></div>`;
+    : `<div class="console-shell${state.navCollapsed ? ' nav-collapsed' : ''}">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${V.consoleBar(state, CONSOLE_TITLE[state.view] || ADMIN_ROUTES[state.view]?.title || '工作台')}${pageHtml()}</main></div>`;
 
   overlayRoot.innerHTML = state.dialog?.type === 'cred' ? credentialDialog(state.dialog)
     : state.dialog?.type === 'mode' ? V.modeDialog(state)
@@ -507,6 +508,7 @@ const actions = {
   'exp-copy': copyExperience,
   'token-fetch': () => loadToken(false),
   'token-force': () => loadToken(true),
+  'nav-collapse': () => { state.navCollapsed = !state.navCollapsed; try { localStorage.setItem('ruying-nav-collapsed', state.navCollapsed ? '1' : '0'); } catch { /* ignore */ } render(); },
   'tour-next': () => { const n = nextTourStep(state.tour); if (n < 0) markTourDone(localStorage); state.tour = n; render(); },
   'tour-skip': () => { state.tour = -1; markTourDone(localStorage); render(); },
 };
