@@ -24,7 +24,7 @@ const state = {
   modeSwitching: false, modeError: null,
   capFilter: 'all',
   createTab: 'video',
-  video: { text: '新款智能手表今天上市，支持全天心率监测与运动记录，欢迎了解。', phase: 'idle', stage: '', queued: false, startedAt: 0, taskId: null, error: null, inputError: '', result: null, abort: null },
+  video: { text: '新款智能手表今天上市，支持全天心率监测与运动记录，欢迎了解。', imageUrl: '', phase: 'idle', stage: '', queued: false, startedAt: 0, taskId: null, error: null, inputError: '', result: null, abort: null },
   voice: { text: '大家好，欢迎使用如影 AI 能力开放平台。', busy: false, error: null, inputError: '', result: null },
   kb: { loaded: false, loading: false, loadError: null, docs: [], uploads: [], dragging: false, deleting: null },
   chat: { messages: [], input: '', streaming: false, abort: null, lastQuestion: '' },
@@ -255,7 +255,7 @@ async function runVideo() {
   try {
     const tts = await api.tts(v.text, 'video');
     v.phase = 'submit'; renderIf('create', 'video');
-    const created = await api.avatar({ text: v.text, audioUrl: tts.audio_url, duration: Math.max(1, Math.round((tts.duration_ms || estimateSeconds(v.text) * 1000) / 1000)) });
+    const created = await api.avatar({ text: v.text, audioUrl: tts.audio_url, duration: Math.max(1, Math.round((tts.duration_ms || estimateSeconds(v.text) * 1000) / 1000)), imageUrl: v.imageUrl || '' });
     v.taskId = created.taskId;
     await pollVideo();
   } catch (e) {

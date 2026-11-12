@@ -188,7 +188,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         if (mode !== 'real') return { taskId: MOCK.createAvatarTask(), mode: 'mock' };
         const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
         const img = imageUrl || rt.vcfg.avatarImageUrl;
-        if (!img) throw fail('AVATAR_NOT_CONFIGURED', '没有可用的数字人形象图片。', ctx.apiKey ? '请在请求里传 imageUrl（可公网访问的人像图片地址）。' : '请联系平台管理员为厂商凭据配置形象图地址。', 'config');
+        if (!img) throw fail('AVATAR_NOT_CONFIGURED', '没有可用的数字人形象图片。', ctx.apiKey ? '请在请求里传 imageUrl（可公网访问的人像图片地址）。' : '请在上方填入一张人像图片地址（可公网访问），或请管理员在「厂商凭据」里配置一个默认形象图。', 'config');
         if (imageUrl && !/^https?:\/\//.test(imageUrl)) throw E.validation('imageUrl 需为 http(s) 地址。');
         const taskId = await rt.client.createImageAvatar({ imageUrl: img, audioUrl, duration, videoName: String(name || `口播-${String(text).slice(0, 16)}`).slice(0, 40) });
         realTasks.set(taskId, { owner: ctx.access.workspace, vendorId: ctx.access.vendorId, capability: SHORTCUT_MODULE.video, charge });
@@ -493,8 +493,8 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       return ok(res, await opTts(ctx, () => modeOf(req, ctx), text, purpose));
     }
     if (p === '/api/avatar' && m === 'POST') {
-      const { text = '', audioUrl = '', duration = 0 } = await readBody(req);
-      return ok(res, await opAvatar(ctx, () => modeOf(req, ctx), { text, audioUrl, duration }));
+      const { text = '', audioUrl = '', duration = 0, imageUrl = '' } = await readBody(req);
+      return ok(res, await opAvatar(ctx, () => modeOf(req, ctx), { text, audioUrl, duration, imageUrl }));
     }
 
     /* ---------- 知识库 ---------- */

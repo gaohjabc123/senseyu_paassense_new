@@ -323,6 +323,9 @@ function videoPanel(s) {
       <span class="pill ${n > 200 ? 'pill--err' : 'pill--info'}" id="video-count">${n} / 200 字 · 约 ${estimateSeconds(v.text)} 秒</span></div>
     <textarea class="editor" id="video-text" data-bind="video.text" rows="4" maxlength="400" ${busy ? 'disabled' : ''} placeholder="例如：新款智能手表上市，支持全天心率监测与运动记录…">${esc(v.text)}</textarea>
     <p class="field-hint">${isReal(s) ? '使用服务端配置的平台音色与数字人形象生成。' : '演示环境使用本地样例音频与视频，不调用平台。'}</p>
+    ${isReal(s) ? `<div class="form-field"><label for="video-image">数字人形象图地址</label>
+      <input class="input" id="video-image" data-bind="video.imageUrl" value="${esc(v.imageUrl || '')}" placeholder="https://…/portrait.png" ${busy ? 'disabled' : ''} />
+      <p class="field-hint">一张人像照片地址，需可公网访问；留空则用管理员在「厂商凭据」里配置的默认形象图。</p></div>` : ''}
     <div class="actions">
       <button class="btn" type="button" data-action="fill-sample" ${busy ? 'disabled' : ''}>填入示例</button>
       <button class="btn btn--primary" type="button" data-action="run-video" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? '生成中…' : '生成视频'}</button>
