@@ -211,6 +211,7 @@ async function refreshMe(me) {
   }
   if (state.mode === 'real' && !state.me.access?.canReal) { setMode('mock'); state.mode = 'mock'; }
   seedCompletedProbeTasks();
+  syncTaskHistory();
   await loadConfig();
 }
 
@@ -258,6 +259,7 @@ async function runVideo() {
     v.phase = 'submit'; renderIf('create', 'video');
     const created = await api.avatar({ text: v.text, audioUrl: tts.audio_url, duration: Math.max(1, Math.round((tts.duration_ms || estimateSeconds(v.text) * 1000) / 1000)), imageUrl: v.imageUrl || '' });
     v.taskId = created.taskId;
+    rememberTaskId(v.taskId, 'video');
     await pollVideo();
   } catch (e) {
     v.phase = 'idle'; v.error = toApiError(e); renderIf('create', 'video');
@@ -386,7 +388,7 @@ async function runExperience() {
   try {
     const r = await api.runCapability(cap.id, collectExpParams());
     if (r.sync) { e.result = r.result; }
-    else { e.taskId = r.taskId; e.result = await pollExperience(); }
+    else { e.taskId = r.taskId; rememberTaskId(e.taskId, 'experience'); e.result = await pollExperience(); }
     e.running = false;
     const expAutoSaved = autoSaveExperience();
     if (state.view === 'experience') { render(); document.getElementById('exp-result-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
@@ -449,22 +451,65 @@ function autoSaveExperience() {
   return false;
 }
 
-/** 一次性补录：2026-11-11 三个测试任务（7003939/7003965/7003986）已完成但建在工作台之外，
- * 超管首次打开时把它们的视频补进作品；只跑一次，其他用户不受影响。 */
+/** 一次性补录：把平台上已知的已完成视频任务补进作品（超管首次打开时）。
+ * 2026-11-13：除 11-11 三个测试任务外，7023071 与 7023472 也已完成（12.24 秒），
+ * 一并补录；用新 flag（v2），已跑过旧版补录的用户也会再跑一次补齐新增的两条。
+ * 只跑一次，其他用户不受影响；按 URL 去重，已在作品里的不会重复。 */
 function seedCompletedProbeTasks() {
-  const FLAG = 'ruying_works_seeded_20261113';
+  const FLAG = 'ruying_works_seeded_20261113_v2';
   try {
     if (state.me?.access?.kind !== 'super' || localStorage.getItem(FLAG)) return;
     const seeds = [
-      { title: '口播 7003939', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/3322f49b-9fa1-434e-bd9a-2ac51204485c/3322f49b-9fa1-434e-bd9a-2ac51204485c.mp4' },
-      { title: '口播 7003965', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/4161ef14-95ee-4de9-a518-d154c8b69129/4161ef14-95ee-4de9-a518-d154c8b69129.mp4' },
-      { title: '口播 7003986', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/8810a098-47f2-4b3e-93a4-525d863b2074/8810a098-47f2-4b3e-93a4-525d863b2074.mp4' },
+      { title: '口播 7003939', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/3322f49b-9fa1-434e-bd9a-2ac51204485c/3322f49b-9fa1-434e-bd9a-2ac51204485c.mp4', duration: 2.64 },
+      { title: '口播 7003965', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/4161ef14-95ee-4de9-a518-d154c8b69129/4161ef14-95ee-4de9-a518-d154c8b69129.mp4', duration: 2.64 },
+      { title: '口播 7003986', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/8810a098-47f2-4b3e-93a4-525d863b2074/8810a098-47f2-4b3e-93a4-525d863b2074.mp4', duration: 2.64 },
+      { title: '口播 7023071（默认图实测）', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/960c18fd-0e2e-4bc8-bbcf-def8f6ab6064/960c18fd-0e2e-4bc8-bbcf-def8f6ab6064.mp4', duration: 12.24 },
+      { title: '口播 7023472（智能手表）', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/e25e1544-0076-4023-80f9-7ee6f76f8aea/e25e1544-0076-4023-80f9-7ee6f76f8aea.mp4', duration: 12.24 },
     ];
     let added = 0;
-    for (const s of seeds) { const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: s.title, url: s.url, duration: 2.64, mode: 'real' }); if (!duplicate) added += 1; }
+    for (const s of seeds) { const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: s.title, url: s.url, duration: s.duration, mode: 'real' }); if (!duplicate) added += 1; }
     localStorage.setItem(FLAG, '1');
     if (added) { state.works = listWorks(); updateWorksBadge(); }
   } catch { /* 本地存储不可用时静默跳过 */ }
+}
+
+/** 任务编号历史：视频任务一创建就把编号存进浏览器（最多 50 条），
+ * 即使中途关掉页面，编号也不会丢；下次打开时 syncTaskHistory 会按编号
+ * 逐个查一次平台，跑完的自动补进作品。 */
+const TASK_HISTORY_KEY = 'ruying_task_history';
+function rememberTaskId(id, kind) {
+  try {
+    if (id === null || id === undefined || id === '') return;
+    const raw = JSON.parse(localStorage.getItem(TASK_HISTORY_KEY) || '[]');
+    const list = Array.isArray(raw) ? raw : [];
+    const key = String(id);
+    if (list.some((x) => String(x.id) === key)) return;
+    list.unshift({ id: key, kind: kind || 'video', at: Date.now() });
+    localStorage.setItem(TASK_HISTORY_KEY, JSON.stringify(list.slice(0, 50)));
+  } catch { /* 本地存储不可用时静默跳过 */ }
+}
+
+/** 同步任务历史：超管打开工作台时，对历史里的每个任务编号只查一次平台，
+ * 已完成（status 5）且有视频地址的，自动补进作品；未完成的不动，等它跑完
+ * 由自动保存接手。只在真实环境跑，失败静默跳过，不挡页面。 */
+async function syncTaskHistory() {
+  try {
+    if (state.me?.access?.kind !== 'super' || state.mode !== 'real') return;
+    const raw = JSON.parse(localStorage.getItem(TASK_HISTORY_KEY) || '[]');
+    const list = Array.isArray(raw) ? raw : [];
+    if (!list.length) return;
+    let added = 0;
+    for (const item of list) {
+      try {
+        const t = await api.task(item.id);
+        if (t?.status === 5 && t?.result?.videoUrl) {
+          const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: `口播 ${item.id}`, url: t.result.videoUrl, duration: t.result.duration, mode: 'real' });
+          if (!duplicate) added += 1;
+        }
+      } catch { /* 单个任务查失败就跳过，不影响其他 */ }
+    }
+    if (added) { state.works = listWorks(); updateWorksBadge(); }
+  } catch { /* 静默跳过 */ }
 }
 
 function saveExperience(btn) {

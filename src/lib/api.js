@@ -91,6 +91,8 @@ export const api = {
   fetchToken: (force) => post('token', { force: !!force }),
   tts: (text, purpose) => request('tts', { method: 'POST', body: { text, purpose }, timeoutMs: 90000 }),
   avatar: (payload) => post('avatar', payload),
+  /** 单次查询任务状态（不轮询），供任务历史同步使用；返回 { status, result, mode, ... } */
+  task: (id) => request('task', { method: 'POST', body: { id }, timeoutMs: 20000 }),
   runCapability: (id, params) => request('capability/run', { method: 'POST', body: { id, params }, timeoutMs: 90000 }),
   kbList: () => request('kb'),
   kbDelete: (id) => del(`kb?id=${encodeURIComponent(id)}`),
