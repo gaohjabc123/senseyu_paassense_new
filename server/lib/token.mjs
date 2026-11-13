@@ -109,7 +109,7 @@ export class TokenManager {
       this.lastError = { code: 'BAD_EXPIRY', message: '平台返回的 Token 过期时间无法识别', at: new Date(now).toISOString() };
       throw E.tokenFailed('token response has no usable expiry');
     }
-    this.cached = { accessToken: json.data.accessToken, expiresAt, fetchedAt: now };
+    this.cached = { accessToken: json.data.accessToken, expiresAt, fetchedAt: now, userId: json.data?.user?.id ?? null };
     this.fetchCount += 1;
     this.lastError = null;
     this.log(`[token] 获取成功，${Math.round((expiresAt - now) / 60000)} 分钟后过期（第 ${this.fetchCount} 次获取）`);

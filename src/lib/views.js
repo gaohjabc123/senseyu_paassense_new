@@ -294,23 +294,31 @@ const QUOTA_LABELS = {
 
 function quotaCardHtml(s) {
   const q = s.me?.quota;
-  if (!q || !q.items) return `<p class="muted">登录后可查看你所在企业的剩余额度。</p><a class="btn card__foot-btn" href="#login" data-view="login">去登录</a>`;
-  const meters = Object.keys(QUOTA_LABELS);
-  const anyAllocated = meters.some((m) => (q.items[m]?.allocated || 0) > 0);
-  if (!anyAllocated) return `<p class="muted">你的企业尚未分配额度，请联系企业管理员或商予科技。</p><a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a>`;
-  const rows = meters.map((m) => {
-    const v = q.items[m] || { allocated: 0, used: 0, remaining: 0 };
+  // 未登录才提示去登录；已登录但拿不到额度是后端问题，不能再让人去登录。
+  if (!s.me?.user) return `<p class="muted">登录后可查看你所在企业的剩余额度。</p><a class="btn card__foot-btn" href="#login" data-view="login">去登录</a>`;
+  if (!q || !q.items) return `<p class="muted">暂时无法获取额度信息，请稍后刷新重试。</p>`;
+  if (q.error && (!Array.isArray(q.items) || q.items.length === 0)) return `<p class="muted">${esc(q.error)}</p>`;
+  // 两种形状统一成数组：租户是按计量键的对象，超级管理员是厂商实时额度的数组。
+  const items = Array.isArray(q.items)
+    ? q.items
+    : Object.keys(QUOTA_LABELS).map((m) => ({ key: m, label: QUOTA_LABELS[m].label, unit: QUOTA_LABELS[m].unit, ...(q.items[m] || { allocated: 0, used: 0, remaining: 0 }) }));
+  const anyAllocated = items.some((it) => (it.allocated || 0) > 0);
+  if (q.kind === 'tenant' && !anyAllocated) return `<p class="muted">你的企业尚未分配额度，请联系企业管理员或商予科技。</p><a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a>`;
+  const rows = items.map((v) => {
     const pct = v.allocated > 0 ? Math.min(100, Math.round((v.used / v.allocated) * 100)) : 0;
-    const low = (q.low || []).includes(m);
+    const low = (q.low || []).includes(v.key);
     const hasQuota = v.allocated > 0;
     return `<div class="quota-row${low ? ' quota-row--low' : ''}">
-      <div class="quota-row__head"><b>${QUOTA_LABELS[m].label}</b>
-        <span class="quota-row__remain">${hasQuota ? `剩余 <b>${v.remaining}</b> ${QUOTA_LABELS[m].unit}` : '未分配'}</span></div>
-      <div class="quota-bar" role="img" aria-label="${QUOTA_LABELS[m].label}已用 ${pct}%"><i style="width:${pct}%"></i></div>
-      <div class="quota-row__meta">已用 ${v.used} / 共 ${v.allocated} ${QUOTA_LABELS[m].unit}${low ? ' · <span class="quota-row__warn">即将用完，请联系管理员追加</span>' : ''}</div>
+      <div class="quota-row__head"><b>${esc(v.label)}</b>
+        <span class="quota-row__remain">${hasQuota ? `剩余 <b>${v.remaining}</b> ${esc(v.unit)}` : '未开通'}</span></div>
+      <div class="quota-bar" role="img" aria-label="${esc(v.label)}已用 ${pct}%"><i style="width:${pct}%"></i></div>
+      <div class="quota-row__meta">已用 ${v.used} / 共 ${v.allocated} ${esc(v.unit)}${low ? ' · <span class="quota-row__warn">即将用完，请联系管理员追加</span>' : ''}</div>
     </div>`;
   }).join('');
-  return `${rows}<p class="muted quota-note">数字为本平台内部台账（管理员分配、真实调用消耗，失败自动退回），底层厂商额度以如影控制台为准。</p><a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a>`;
+  const note = q.kind === 'vendor'
+    ? '数字为如影厂商实时额度（直接向平台查询，含已用与剩余），厂商侧如有调整以如影控制台为准。'
+    : '数字为本平台内部台账（管理员分配、真实调用消耗，失败自动退回），底层厂商额度以如影控制台为准。';
+  return `${rows}<p class="muted quota-note">${note}</p><a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a>`;
 }
 
 function emptyState(title, text, action = '') {

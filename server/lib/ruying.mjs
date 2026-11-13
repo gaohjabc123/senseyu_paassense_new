@@ -74,6 +74,30 @@ export function normalizeTask(t, fallbackId) {
   };
 }
 
+/** 厂商实时额度规整：把平台 resource 接口的字段映射成前端可渲染的条目数组。
+ * 每项 { key, label, unit, allocated, used, remaining }；allocated 为 0 表示未开通。
+ * 平台真实结构是 data.resourceConfig，下挂 {base}TotalQty / {base}UsageQty；
+ * 用量可能是小数，remaining 保留两位小数。 */
+export function normalizeVendorResource(data = {}) {
+  const rc = data?.resourceConfig || data || {};
+  const FIELDS = [
+    { key: 'genVideoDuration', label: '视频合成', unit: '分钟' },
+    { key: 'genImageVideoDuration', label: '图片数字人', unit: '秒' },
+    { key: 'liveDuration', label: '直播', unit: '分钟' },
+    { key: 'genTakeoverVideoDuration', label: '接管视频', unit: '分钟' },
+    { key: 'genCharModel', label: '人物形象模型', unit: '个' },
+    { key: 'genTtsCharVoiceModel', label: 'TTS 音色模型', unit: '个' },
+    { key: 'genVcModel', label: '音色克隆模型', unit: '个' },
+    { key: 'genEditImage', label: 'AI 图片编辑', unit: '个' },
+  ];
+  const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+  return FIELDS.map(({ key, label, unit }) => {
+    const allocated = round2(rc[`${key}TotalQty`]);
+    const used = round2(rc[`${key}UsageQty`]);
+    return { key, label, unit, allocated, used, remaining: round2(allocated - used) };
+  });
+}
+
 export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(...a), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), invalidCodes = [] } = {}) {
   async function post(apiPath, payload, { billable = false } = {}) {
     if ((billable || isBillable(apiPath)) && !cfg.allowBillable) throw E.billingGuard();
@@ -99,8 +123,40 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
     }
   }
 
+  async function get(apiPath) {
+    try {
+      return await tokens.withToken(async (token) => {
+        let resp;
+        try {
+          resp = await fetchImpl(`${cfg.baseUrl}${apiPath}`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(cfg.requestTimeoutMs || 20000),
+          });
+        } catch (e) { throw toAppError(e); }
+        const text = await resp.text();
+        let j = null; try { j = text ? JSON.parse(text) : null; } catch { /* 非 JSON */ }
+        if (!resp.ok || !j || j.code !== 0) throw new PlatformError(resp.status, j?.code, j?.message);
+        return j.data;
+      }, { invalidCodes });
+    } catch (e) {
+      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`);
+      throw toAppError(e);
+    }
+  }
+
   return {
     post,
+    get,
+
+    /** 厂商实时额度：GET /api/2dvh/v1/user/config/resource，返回规整后的额度条目数组 */
+    async resource() {
+      const tok = await tokens.get();
+      const userId = tok?.userId;
+      if (!userId) throw E.upstream(400, '平台未返回用户编号，无法查询厂商额度。', 'resource without userId');
+      const data = await get(`/api/2dvh/v1/user/config/resource?userId=${encodeURIComponent(userId)}`);
+      return normalizeVendorResource(data);
+    },
 
     /** TTS：提交 → 轮询结果，返回 { audio_url, duration_ms } */
     async tts(text, { maxWaitMs = 60000, intervalMs = 1500 } = {}) {

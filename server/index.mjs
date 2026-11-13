@@ -251,9 +251,17 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       user: ctx.user ? T.publicUser(ctx.user) : null,
       tenant: a.tenant || null,
       access: { kind: a.kind, allowed: a.allowed, modules: a.modules, canReal: a.canReal, realReason: a.realReason || '' },
-      quota: a.kind === 'tenant' ? { items: Q.tenantQuota(a.tenant.id), low: Q.lowItems(a.tenant.id) } : null,
+      quota: a.kind === 'tenant' ? { kind: 'tenant', items: Q.tenantQuota(a.tenant.id), low: Q.lowItems(a.tenant.id) } : null,
       publicDemo: cfg.publicDemo,
     };
+  }
+
+  /** 超级管理员的厂商实时额度：直接问平台 resource 接口，不走内部台账（台账是空的）。失败不抛，由调用方降级。 */
+  async function vendorQuotaView(vendorId) {
+    const rt = runtimeFor(vendorId, false);
+    const items = await rt.client.resource();
+    const low = items.filter((it) => it.allocated > 0 && it.remaining / it.allocated < 0.1).map((it) => it.key);
+    return { kind: 'vendor', source: 'live', items, low, fetchedAt: new Date().toISOString() };
   }
 
   function configView(mode, ctx) {
@@ -287,7 +295,14 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
   /* ---------- 路由：认证与账号 ---------- */
   async function authRoutes(req, res, p, ctx) {
     const m = req.method;
-    if (p === '/api/me' && m === 'GET') return ok(res, meView(ctx)), true;
+    if (p === '/api/me' && m === 'GET') {
+      const view = meView(ctx);
+      if (ctx.access.kind === 'super' && ctx.access.canReal && ctx.access.vendorId) {
+        try { view.quota = await vendorQuotaView(ctx.access.vendorId); }
+        catch (e) { view.quota = { kind: 'vendor', source: 'live', items: [], low: [], error: '暂时无法从厂商获取实时额度，请稍后刷新。' }; }
+      }
+      return ok(res, view), true;
+    }
     if (p === '/api/auth/login' && m === 'POST') {
       const { username, password } = await readBody(req);
       if (!username || !password) throw E.validation('请输入用户名和密码。');
