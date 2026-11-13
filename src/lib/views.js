@@ -277,13 +277,40 @@ export function overviewView(s) {
         <div class="quick-list">${EXPERIENCES.filter((e) => canUse(s, SHORTCUT_MODULE[e.id])).map((e) => `
           <button class="quick-item" type="button" data-experience="${e.id}"><span class="quick-item__icon" aria-hidden="true">${e.icon}</span>
             <span><b>${esc(e.name)}</b><small>${esc(e.desc)}</small></span></button>`).join('') || '<p class="muted">你的企业没有开通创作中心的快捷能力，可以在能力目录里查看已开通的能力。</p>'}</div></div>
-      <div class="card"><div class="card__title"><h2>额度与用量</h2></div>
-        <p class="muted">本门户不展示额度数字：如影平台没有提供可供门户查询的额度接口，为避免展示不准确的数据，额度与用量请以如影控制台为准。</p>
-        <a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a></div>
+      <div class="card"><div class="card__title"><h2>我的额度</h2></div>
+        ${quotaCardHtml(s)}</div>
     </div>
     <div class="card"><div class="card__title"><h2>最近作品</h2>${recent.length ? '<a class="btn btn--sm" href="#tasks" data-view="tasks">查看全部</a>' : ''}</div>
       ${recent.length ? worksTable(recent) : emptyState('还没有作品', '在创作中心生成一条视频或语音，点「保存到作品」就会出现在这里。', '<a class="btn btn--primary btn--sm" href="#create" data-view="create">去创作中心</a>')}</div>
   </div>`;
+}
+
+/** 我的额度：按 /api/me 返回的企业额度台账展示（已分配 / 已用 / 剩余） */
+const QUOTA_LABELS = {
+  video_seconds: { label: '视频时长', unit: '秒' },
+  tts_chars: { label: '语音合成字数', unit: '字' },
+  api_calls: { label: '其他能力调用', unit: '次' },
+};
+
+function quotaCardHtml(s) {
+  const q = s.me?.quota;
+  if (!q || !q.items) return `<p class="muted">登录后可查看你所在企业的剩余额度。</p><a class="btn card__foot-btn" href="#login" data-view="login">去登录</a>`;
+  const meters = Object.keys(QUOTA_LABELS);
+  const anyAllocated = meters.some((m) => (q.items[m]?.allocated || 0) > 0);
+  if (!anyAllocated) return `<p class="muted">你的企业尚未分配额度，请联系企业管理员或商予科技。</p><a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a>`;
+  const rows = meters.map((m) => {
+    const v = q.items[m] || { allocated: 0, used: 0, remaining: 0 };
+    const pct = v.allocated > 0 ? Math.min(100, Math.round((v.used / v.allocated) * 100)) : 0;
+    const low = (q.low || []).includes(m);
+    const hasQuota = v.allocated > 0;
+    return `<div class="quota-row${low ? ' quota-row--low' : ''}">
+      <div class="quota-row__head"><b>${QUOTA_LABELS[m].label}</b>
+        <span class="quota-row__remain">${hasQuota ? `剩余 <b>${v.remaining}</b> ${QUOTA_LABELS[m].unit}` : '未分配'}</span></div>
+      <div class="quota-bar" role="img" aria-label="${QUOTA_LABELS[m].label}已用 ${pct}%"><i style="width:${pct}%"></i></div>
+      <div class="quota-row__meta">已用 ${v.used} / 共 ${v.allocated} ${QUOTA_LABELS[m].unit}${low ? ' · <span class="quota-row__warn">即将用完，请联系管理员追加</span>' : ''}</div>
+    </div>`;
+  }).join('');
+  return `${rows}<p class="muted quota-note">数字为本平台内部台账（管理员分配、真实调用消耗，失败自动退回），底层厂商额度以如影控制台为准。</p><a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a>`;
 }
 
 function emptyState(title, text, action = '') {

@@ -270,6 +270,19 @@ main:focus { outline: none; }
 .upload-item__err { color: #B91C1C; flex-basis: 100%; }
 .upload-bar { flex: 1; min-width: 60px; height: 6px; border-radius: 99px; background: var(--gray-200); overflow: hidden; }
 .upload-bar i { display: block; height: 100%; background: var(--brand-600); transition: width var(--dur-fast); }
+/* 我的额度 */
+.quota-row { padding: 10px 0; border-bottom: 1px solid var(--gray-100); }
+.quota-row:last-of-type { border-bottom: 0; }
+.quota-row__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
+.quota-row__remain { color: var(--gray-500); font-size: 13px; }
+.quota-row__remain b { font-size: 18px; color: var(--gray-900); letter-spacing: -.4px; }
+.quota-bar { height: 6px; border-radius: 99px; background: var(--gray-200); overflow: hidden; margin: 8px 0 6px; }
+.quota-bar i { display: block; height: 100%; background: var(--brand-600); transition: width var(--dur-fast); }
+.quota-row--low .quota-bar i { background: #DC2626; }
+.quota-row--low .quota-row__remain b { color: #DC2626; }
+.quota-row__meta { font-size: 12px; color: var(--gray-500); }
+.quota-row__warn { color: #DC2626; font-weight: 600; }
+.quota-note { margin-top: var(--sp-3); font-size: 12px; }
 .kb-docs .doc-list { margin-top: var(--sp-3); }
 .chat { height: 360px; overflow-y: auto; padding: var(--sp-4); background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); }
 .msg { display: flex; gap: 10px; margin-bottom: 12px; }
