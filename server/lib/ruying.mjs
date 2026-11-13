@@ -25,6 +25,17 @@ export const PLATFORM = {
 /** duration 规整：整数秒、至少 5 秒 */
 export const normalizeDuration = (sec) => Math.max(5, Math.ceil(Number(sec) || 0));
 
+/**
+ * 视频名称清洗（2026-11-13 平台客服实锤）：
+ * videoName 含 ，- 等符号时，平台受理任务后一直卡在 status 0 不开始；
+ * 用无符号名称则正常开始。只保留中文、字母、数字，其余全部去掉；
+ * 去空后用默认名 + 时间戳兜底（纯数字，无符号）。
+ */
+export function sanitizeVideoName(name) {
+  const clean = String(name || '').replace(/[^\u4e00-\u9fffA-Za-z0-9]/g, '').slice(0, 40);
+  return clean || ('口播视频' + String(Date.now()).slice(-6));
+}
+
 /** 平台原始失败（供 TokenManager 判断是否 Token 失效） */
 class PlatformError extends Error {
   constructor(httpStatus, platformCode, platformMessage) {
@@ -117,9 +128,9 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
       throw new AppError({ code: 'TTS_TIMEOUT', message: '配音生成时间过长。', hint: '平台可能在排队，请稍后重试。', action: 'later' });
     },
 
-    /** 图片数字人：返回平台任务编号 */
+    /** 图片数字人：返回平台任务编号（videoName 先清洗，含符号会被平台卡住） */
     async createImageAvatar({ imageUrl, audioUrl, duration, videoName }) {
-      const data = await post(PLATFORM.imageAvatar.path, PLATFORM.imageAvatar.body({ videoName, imageUrl, audioUrl, duration: normalizeDuration(duration) }), { billable: true });
+      const data = await post(PLATFORM.imageAvatar.path, PLATFORM.imageAvatar.body({ videoName: sanitizeVideoName(videoName), imageUrl, audioUrl, duration: normalizeDuration(duration) }), { billable: true });
       const id = typeof data === 'object' ? pick(data, ['taskId', 'id', 'videoId']) : data;
       if (!id) throw E.upstream(400, '任务已提交但平台未返回任务编号', 'avatar create without id');
       return String(id);
