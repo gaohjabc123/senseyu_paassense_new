@@ -26,10 +26,25 @@ export function listWorks(now = Date.now()) {
  * 返回 { work, persisted }：persisted=false 表示浏览器禁止存储，只在本次打开期间有效
  */
 export function addWork({ kind, type, title, url = '', text = '', duration = null, mode = 'mock' }, now = Date.now()) {
+  // 同一 url 只存一份：任务完成自动保存后，再手动点「保存到作品」不会重复。
+  if (url) {
+    const existing = read().find((w) => w.url === url && now < w.expiresAt);
+    if (existing) return { work: existing, persisted: true, duplicate: true };
+  }
   const work = { id: `w_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`, kind, type, title, url, text, duration, mode, at: now, expiresAt: now + TTL };
   const persisted = write([work, ...read()].slice(0, MAX));
   return { work, persisted };
 }
 export function getWork(id) { return read().find((w) => w.id === id) || null; }
+export function renameWork(id, title) {
+  const name = String(title || '').trim().slice(0, 60);
+  if (!name) return null;
+  const list = read();
+  const w = list.find((x) => x.id === id);
+  if (!w) return null;
+  w.title = name;
+  write(list);
+  return w;
+}
 export function removeWork(id) { write(read().filter((w) => w.id !== id)); }
 export function clearWorks() { write([]); }

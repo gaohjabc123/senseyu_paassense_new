@@ -6,7 +6,7 @@ import { PRODUCT, DEFAULT_VIEW, SITE_VIEWS, navById, SHORTCUT_MODULE } from './l
 import { TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone } from './lib/guide.js';
 import { validateText, estimateSeconds, stageLabel } from './lib/wizard.js';
 import { api, ApiError, getMode, setMode, pollTask, uploadKb, chatStream, toApiError } from './lib/api.js';
-import { listWorks, addWork, removeWork, clearWorks, getWork } from './lib/works.js';
+import { listWorks, addWork, removeWork, renameWork, clearWorks, getWork } from './lib/works.js';
 import { capById } from './lib/capabilities.js';
 import { words } from './lib/html.js';
 import * as V from './lib/views.js';
@@ -210,6 +210,7 @@ async function refreshMe(me) {
     state.kb = freshKb(); state.chat.messages = []; state.adm = initialAdminState(); state.token = { loading: false, data: null, error: null };
   }
   if (state.mode === 'real' && !state.me.access?.canReal) { setMode('mock'); state.mode = 'mock'; }
+  seedCompletedProbeTasks();
   await loadConfig();
 }
 
@@ -277,8 +278,9 @@ async function pollVideo() {
       },
     });
     Object.assign(v, { phase: 'done', result, abort: null });
+    const autoSaved = autoSaveVideo(result, v.text);
     renderIf('create', 'video');
-    toast('视频生成完成');
+    toast(autoSaved ? '视频生成完成，已自动保存到我的作品' : '视频生成完成');
   } catch (e) {
     v.abort = null; v.phase = 'idle';
     if (e?.name === 'AbortError') { v.error = new ApiError({ message: '已停止等待。', hint: `任务仍在平台继续处理（编号 ${v.taskId}），需要时可以继续等待结果。`, action: 'resume' }); }
@@ -386,7 +388,9 @@ async function runExperience() {
     if (r.sync) { e.result = r.result; }
     else { e.taskId = r.taskId; e.result = await pollExperience(); }
     e.running = false;
+    const expAutoSaved = autoSaveExperience();
     if (state.view === 'experience') { render(); document.getElementById('exp-result-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (expAutoSaved) toast('已自动保存到我的作品');
   } catch (err) {
     e.running = false;
     e.error = err?.name === 'AbortError'
@@ -417,6 +421,50 @@ async function resumeExperience() {
   render(); startTicker();
   try { e.result = await pollExperience(); } catch (err) { e.error = err?.name === 'AbortError' ? null : toApiError(err); }
   e.running = false; renderIf('experience');
+}
+
+/** 任务完成自动保存：只存真实环境的媒体结果，演示样例不自动进作品。
+ * 返回 true 表示新存了一条；已存在（去重）或不满足条件返回 false。 */
+function autoSaveVideo(result, text) {
+  if (!result || result.mode !== 'real' || !result.videoUrl) return false;
+  const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: String(text || '').slice(0, 20) || '视频口播', url: result.videoUrl, duration: result.duration, mode: result.mode });
+  if (!duplicate) { state.works = listWorks(); updateWorksBadge(); return true; }
+  return false;
+}
+
+function autoSaveExperience() {
+  const r = state.exp.result;
+  const cap = capById(state.exp.capId);
+  if (!r || !cap || r.mode !== 'real') return false;
+  const url = r.videoUrl || r.audioUrl || r.imageUrl || '';
+  if (!url) return false; // 纯文字结果不自动保存，手动点保存才进作品
+  const out = r.output;
+  const kind = ['video', 'audio', 'image'].includes(out) ? out : 'text';
+  const { duplicate } = addWork({
+    kind, type: cap.name, title: r.title || cap.name, mode: r.mode, url,
+    text: kind === 'text' ? (r.jsonText || r.text || '') : '',
+    duration: r.duration || (r.durationMs ? r.durationMs / 1000 : null),
+  });
+  if (!duplicate) { state.works = listWorks(); updateWorksBadge(); return true; }
+  return false;
+}
+
+/** 一次性补录：2026-11-11 三个测试任务（7003939/7003965/7003986）已完成但建在工作台之外，
+ * 超管首次打开时把它们的视频补进作品；只跑一次，其他用户不受影响。 */
+function seedCompletedProbeTasks() {
+  const FLAG = 'ruying_works_seeded_20261113';
+  try {
+    if (state.me?.access?.kind !== 'super' || localStorage.getItem(FLAG)) return;
+    const seeds = [
+      { title: '口播 7003939', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/3322f49b-9fa1-434e-bd9a-2ac51204485c/3322f49b-9fa1-434e-bd9a-2ac51204485c.mp4' },
+      { title: '口播 7003965', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/4161ef14-95ee-4de9-a518-d154c8b69129/4161ef14-95ee-4de9-a518-d154c8b69129.mp4' },
+      { title: '口播 7003986', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/8810a098-47f2-4b3e-93a4-525d863b2074/8810a098-47f2-4b3e-93a4-525d863b2074.mp4' },
+    ];
+    let added = 0;
+    for (const s of seeds) { const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: s.title, url: s.url, duration: 2.64, mode: 'real' }); if (!duplicate) added += 1; }
+    localStorage.setItem(FLAG, '1');
+    if (added) { state.works = listWorks(); updateWorksBadge(); }
+  } catch { /* 本地存储不可用时静默跳过 */ }
 }
 
 function saveExperience(btn) {
@@ -514,7 +562,7 @@ const actions = {
 };
 
 document.addEventListener('click', (ev) => {
-  const t = ev.target.closest('[data-action],[data-group],[data-filter],[data-use],[data-experience],[data-create],[data-mode],[data-del],[data-work-view],[data-kb-del],[data-skip],[data-module],[data-module-group],[data-module-all],[data-quick-days],[data-quick-extend],[data-user-act],[data-vendor-act],[data-key-revoke]');
+  const t = ev.target.closest('[data-action],[data-group],[data-filter],[data-use],[data-experience],[data-create],[data-mode],[data-del],[data-rename],[data-work-view],[data-kb-del],[data-skip],[data-module],[data-module-group],[data-module-all],[data-quick-days],[data-quick-extend],[data-user-act],[data-vendor-act],[data-key-revoke]');
   if (!t) return;
   if (admin.click(t)) return;
   const d = t.dataset;
@@ -536,6 +584,15 @@ document.addEventListener('click', (ev) => {
   if (d.del) {
     if (!window.confirm('确认删除这条作品记录？')) return;
     removeWork(d.del); state.works = listWorks(); render(); toast('已删除');
+    return;
+  }
+  if (d.rename) {
+    const w = getWork(d.rename);
+    if (!w) return;
+    const name = window.prompt('给作品改个名字', w.title);
+    if (name === null) return;
+    if (!renameWork(d.rename, name)) { toast('名字不能为空'); return; }
+    state.works = listWorks(); render(); toast('已改名');
     return;
   }
   if (d.workView) { const w = getWork(d.workView); if (w) { state.dialog = { type: 'work', work: w }; render(); } return; }

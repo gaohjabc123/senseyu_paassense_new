@@ -326,16 +326,16 @@ function emptyState(title, text, action = '') {
 }
 
 function workOpen(w) {
-  return w.kind === 'text'
-    ? `<button class="btn btn--sm" type="button" data-work-view="${w.id}">查看</button>`
-    : `<a class="btn btn--sm" href="${esc(w.url)}" target="_blank" rel="noreferrer">打开<span class="sr-only">${esc(w.title)}（新窗口）</span></a>`;
+  if (w.kind === 'text') return `<button class="btn btn--sm" type="button" data-work-view="${w.id}">查看</button>`;
+  // 视频/音频/图片：页内预览弹窗，不再直接跳新窗口
+  return `<button class="btn btn--sm" type="button" data-work-view="${w.id}">预览</button>`;
 }
 
 function worksTable(list, { withDelete = false } = {}) {
   return `<ul class="work-list">${list.map((w) => `<li class="work-item">
       <div class="work-item__main"><b>${esc(w.title)}</b>
         <span class="work-item__meta">${esc(w.type)} · ${w.mode === 'real' ? '真实环境' : '演示样例'} · ${esc(w.createdAt)} · 剩余 ${w.days} 天</span></div>
-      <div class="work-item__actions">${workOpen(w)}${withDelete ? `<button class="btn btn--sm" type="button" data-del="${w.id}" aria-label="删除作品：${esc(w.title)}">删除</button>` : ''}</div>
+      <div class="work-item__actions">${workOpen(w)}${withDelete ? `<button class="btn btn--sm" type="button" data-rename="${w.id}" aria-label="给作品改名：${esc(w.title)}">改名</button><button class="btn btn--sm" type="button" data-del="${w.id}" aria-label="删除作品：${esc(w.title)}">删除</button>` : ''}</div>
     </li>`).join('')}</ul>`;
 }
 
@@ -541,11 +541,17 @@ export function modeDialog(s) {
 }
 
 export function workDialog(w) {
+  let body = '';
+  if (w.kind === 'video' && w.url) body = `<video controls playsinline preload="metadata" src="${esc(w.url)}" class="media-video" aria-label="${esc(w.title)}"></video>`;
+  else if (w.kind === 'audio' && w.url) body = `<audio controls src="${esc(w.url)}" class="media-audio" aria-label="${esc(w.title)}"></audio>`;
+  else if (w.kind === 'image' && w.url) body = `<img src="${esc(w.url)}" alt="${esc(w.title)}" class="media-image">`;
+  else body = `<pre class="json-block">${esc(w.text)}</pre>`;
+  const links = w.url ? `${(w.kind === 'video' || w.kind === 'audio') ? `<a class="btn" href="${esc(w.url)}" download>下载</a>` : ''}<a class="btn" href="${esc(w.url)}" target="_blank" rel="noreferrer">在新窗口打开</a>` : '';
   return `<div class="sheet-mask" data-action="close-dialog"></div>
   <div class="sheet sheet--wide" role="dialog" aria-modal="true" aria-labelledby="work-dialog-title">
     <h3 id="work-dialog-title">${esc(w.title)}</h3>
-    <pre class="json-block">${esc(w.text)}</pre>
-    <div class="actions"><button class="btn btn--primary" type="button" data-action="close-dialog" data-autofocus>关闭</button></div></div>`;
+    ${body}
+    <div class="actions">${links}<button class="btn btn--primary" type="button" data-action="close-dialog" data-autofocus>关闭</button></div></div>`;
 }
 
 export function tourCard(index) {
