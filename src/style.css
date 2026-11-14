@@ -494,3 +494,20 @@ main:focus { outline: none; }
 .api-doc .json-block { font-size: 12px; }
 .inline-form + .field-hint, .quota-table + .field-hint { margin-top: var(--sp-3); }
 .card .inline-form { margin-top: var(--sp-4); }
+
+/* ---------- 教学：作品状态、班级、批量导入、批改 ---------- */
+.alert--info { background: var(--brand-50, #EEF2FF); border: 1px solid var(--brand-100, #E0E7FF); color: var(--gray-900); align-items: center; }
+.alert--info .alert__body p { color: var(--gray-700); }
+.console > .alert { margin-top: 0; margin-bottom: var(--sp-4); }
+.work-item__title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.work-item__comment { font-size: 13px; color: var(--gray-700); overflow-wrap: anywhere; }
+.work-item__actions { flex-wrap: wrap; justify-content: flex-end; }
+.review-box { margin-top: var(--sp-4); padding: 12px 14px; border-radius: var(--radius-sm); background: var(--gray-50); border: 1px solid var(--gray-200); font-size: 14px; }
+.review-box p { margin-top: 6px; color: var(--gray-700); line-height: 1.7; overflow-wrap: anywhere; }
+.input--sm { padding: 6px 8px; font-size: 13px; min-width: 96px; }
+.editor--mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.6; }
+.teach-table .teach-score { width: 84px; min-width: 84px; }
+.teach-table .teach-comment { min-width: 220px; width: 100%; }
+.cred-list { max-height: 46vh; overflow-y: auto; margin: var(--sp-4) 0; border: 1px solid var(--gray-200); border-radius: var(--radius-sm); }
+.toolbar > a.btn { margin-left: auto; }
+@media (max-width: 720px) { .toolbar > a.btn { margin-left: 0; } }

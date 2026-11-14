@@ -22,6 +22,7 @@ import { AppError, E, toAppError, errorBody } from './lib/errors.mjs';
 import { openDb } from './lib/db.mjs';
 import { createTenancy, SHORTCUT_MODULE, MODULE_IDS } from './lib/tenancy.mjs';
 import { createQuota, costOf, METERS } from './lib/quota.mjs';
+import { createTeaching } from './lib/teaching.mjs';
 import { CAPABILITIES, GROUPS, capById, stats, OUTPUT_LABEL } from '../src/lib/capabilities.js';
 
 const PRODUCT_NAME = '如影 AI 能力开放平台';
@@ -45,6 +46,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
   const db = injectedDb || openDb(cfg.dbFile);
   const Q = createQuota({ db });
   const T = createTenancy({ db, cfg, quota: Q, log: (m) => log.log(m) });
+  const TE = createTeaching({ db, tenancy: T });
   T.bootstrap();
   try { kb.prune(); T.pruneLogs(); } catch { /* ignore */ }
 
@@ -247,9 +249,14 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
 
   function meView(ctx) {
     const a = ctx.access;
+    const u = ctx.user;
+    const school = !!a.tenant?.isSchool;
+    const className = u?.class_id ? (db.prepare('SELECT name FROM classes WHERE id = ?').get(u.class_id)?.name || '') : '';
     return {
-      user: ctx.user ? T.publicUser(ctx.user) : null,
+      user: u ? { ...T.publicUser(u), className } : null,
       tenant: a.tenant || null,
+      // 教学功能开关：院校客户才有班级、提交与批改
+      teaching: { isSchool: school, canReview: school && ['teacher', 'tenant_admin'].includes(u?.role), canSubmit: school && u?.role === 'member' && !!className },
       access: { kind: a.kind, allowed: a.allowed, modules: a.modules, canReal: a.canReal, realReason: a.realReason || '' },
       quota: a.kind === 'tenant' ? { kind: 'tenant', items: Q.tenantQuota(a.tenant.id), low: Q.lowItems(a.tenant.id) } : null,
       publicDemo: cfg.publicDemo,
@@ -348,11 +355,12 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       if (!seg[1] && m === 'POST') return ok(res, T.createTenant(actor, body, ctx.ip)), true;
       const id = seg[1];
       if (!seg[2]) {
-        if (m === 'GET') return ok(res, { tenant: T.getTenant(id), users: T.listUsers(id), usage: T.usageStats(id, 30), quota: Q.tenantQuota(id), keys: T.listKeys(id), ledger: Q.ledgerOf({ tenantId: id, limit: 30 }) }), true;
+        if (m === 'GET') return ok(res, { tenant: T.getTenant(id), users: T.listUsers(id), usage: T.usageStats(id, 30), quota: Q.tenantQuota(id), keys: T.listKeys(id), ledger: Q.ledgerOf({ tenantId: id, limit: 30 }), classes: TE.listClasses(id) }), true;
         if (m === 'PATCH') return ok(res, { tenant: T.updateTenant(actor, id, body, ctx.ip) }), true;
         if (m === 'DELETE') { T.deleteTenant(actor, id, ctx.ip); return ok(res, { ok: true }), true; }
       }
-      if (seg[2] === 'users' && m === 'POST') return ok(res, T.createUser(actor, id, body, ctx.ip)), true;
+      if (seg[2] === 'users' && seg[3] === 'import' && m === 'POST') return ok(res, T.importUsers(actor, id, body, ctx.ip)), true;
+      if (seg[2] === 'users' && !seg[3] && m === 'POST') return ok(res, T.createUser(actor, id, body, ctx.ip)), true;
       if (seg[2] === 'quota' && m === 'POST') {
         // 从厂商池分配给客户 / 从客户回收到厂商池
         const t = T.tenantRaw(id);
@@ -420,12 +428,63 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       return ok(res, { key: T.revokeKey(actor, seg[1], ctx.ip) }), true;
     }
     if (seg[0] === 'ledger' && m === 'GET') return ok(res, { ledger: Q.ledgerOf({ tenantId: tid, limit: 100 }), meters: METERS }), true;
-    if (seg[0] === 'users' && !seg[1] && m === 'GET') return ok(res, { users: T.listUsers(tid), maxUsers: T.getTenant(tid).maxUsers }), true;
+    if (seg[0] === 'users' && !seg[1] && m === 'GET') { const t = T.getTenant(tid); return ok(res, { users: T.listUsers(tid), maxUsers: t.maxUsers, isSchool: t.isSchool, classes: TE.listClasses(tid) }), true; }
     if (seg[0] === 'users' && !seg[1] && m === 'POST') return ok(res, T.createUser(actor, tid, body, ctx.ip)), true;
+    if (seg[0] === 'users' && seg[1] === 'import' && !seg[2] && m === 'POST') return ok(res, T.importUsers(actor, tid, body, ctx.ip)), true;
+    // 班级（院校客户）：建班、指定任课教师、删除
+    if (seg[0] === 'classes') {
+      if (!seg[1] && m === 'GET') return ok(res, { classes: TE.listClasses(tid), teachers: T.listUsers(tid).filter((u) => ['teacher', 'tenant_admin'].includes(u.role) && u.status === 'active').map((u) => ({ id: u.id, username: u.username, displayName: u.displayName, role: u.role })), isSchool: T.getTenant(tid).isSchool }), true;
+      if (!seg[1] && m === 'POST') return ok(res, { class: TE.createClass(actor, tid, body, ctx.ip) }), true;
+      if (seg[1] && !seg[2] && m === 'PATCH') return ok(res, { class: TE.updateClass(actor, seg[1], body, ctx.ip) }), true;
+      if (seg[1] && !seg[2] && m === 'DELETE') { TE.deleteClass(actor, seg[1], ctx.ip); return ok(res, { ok: true }), true; }
+    }
     if (seg[0] === 'users' && seg[1]) return userOps(req, res, actor, seg, body, ctx), true;
     if (seg[0] === 'logs' && m === 'GET') return ok(res, logsQuery(url, { tenantId: tid })), true;
     if (seg[0] === 'logs.csv' && m === 'GET') return sendCsv(res, logsQuery(url, { tenantId: tid }, 5000)), true;
     throw fail('API_NOT_FOUND', '接口不存在。');
+  }
+
+  /* ---------- 路由：作品（服务端保存）与批改 ---------- */
+  async function teachingRoutes(req, res, p, url, ctx) {
+    const m = req.method;
+    if (p === '/api/works' || p.startsWith('/api/works/')) {
+      const u = requireUser(ctx); // 访客的作品只存在本机浏览器，不走服务端
+      const seg = p.split('/').slice(3); // [id?, 'submit'|'withdraw'?]
+      if (!seg[0]) {
+        if (m === 'GET') return ok(res, { works: TE.listWorks(u) }), true;
+        if (m === 'POST') return ok(res, TE.addWork(u, await readBody(req))), true;
+        if (m === 'DELETE') return ok(res, { ...TE.clearWorks(u), works: TE.listWorks(u) }), true;
+      } else if (!seg[1]) {
+        if (m === 'PATCH') { const { title } = await readBody(req); return ok(res, { work: TE.renameWork(u, seg[0], title) }), true; }
+        if (m === 'DELETE') { TE.removeWork(u, seg[0]); return ok(res, { ok: true }), true; }
+      } else if (m === 'POST' && seg[1] === 'submit') return ok(res, { work: TE.submitWork(u, seg[0], ctx.ip) }), true;
+      else if (m === 'POST' && seg[1] === 'withdraw') return ok(res, { work: TE.withdrawWork(u, seg[0], ctx.ip) }), true;
+      throw fail('API_NOT_FOUND', '接口不存在。');
+    }
+    if (p.startsWith('/api/teach/')) {
+      const actor = requireRole(ctx, 'teacher', 'tenant_admin');
+      if (actor.must_change_pw) throw fail('PASSWORD_CHANGE_REQUIRED', '请先修改初始密码。', '', 'fix');
+      const seg = p.split('/').slice(3);
+      const filter = { classId: url.searchParams.get('class') || '', status: url.searchParams.get('status') || '' };
+      if (seg[0] === 'works' && !seg[1] && m === 'GET') return ok(res, TE.reviewList(actor, filter)), true;
+      if (seg[0] === 'works.csv' && m === 'GET') return sendGradesCsv(res, TE.reviewList(actor, filter).works), true;
+      if (seg[0] === 'works' && seg[1] && seg[2] === 'review' && m === 'POST') return ok(res, { work: TE.review(actor, seg[1], await readBody(req), ctx.ip) }), true;
+      throw fail('API_NOT_FOUND', '接口不存在。');
+    }
+    return false;
+  }
+
+  const csvCell = (v) => { let s = v == null ? '' : String(v); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }; // 防止表格软件把单元格当公式执行
+  const csvTime = (ms) => (ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '');
+
+  /** 成绩单：教师 / 学校管理员导出，用于教学留档 */
+  function sendGradesCsv(res, works) {
+    const head = ['班级', '账号', '姓名', '作品', '类型', '环境', '提交时间', '评分', '评语', '批改人', '批改时间', '作品地址'];
+    const lines = works.map((w) => [w.className, w.student.username, w.student.name, w.title, w.type, w.mode === 'real' ? '真实环境' : '演示样例', csvTime(w.submittedAt),
+      w.review ? w.review.score : '', w.review?.comment || '', w.review?.reviewer || '', csvTime(w.review?.at), /^https?:/.test(w.url) ? w.url : ''].map(csvCell).join(','));
+    const t = '\uFEFF' + [head.join(','), ...lines].join('\r\n');
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="grades-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
+    res.end(t);
   }
 
   function userOps(req, res, actor, seg, body, ctx) {
@@ -648,6 +707,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         if (await authRoutes(req, res, p, ctx)) return;
         if (await adminRoutes(req, res, p, url, ctx)) return;
         if (await orgRoutes(req, res, p, url, ctx)) return;
+        if (await teachingRoutes(req, res, p, url, ctx)) return;
         await workspaceRoutes(req, res, p, url, ctx);
       } catch (err) {
         const e = toAppError(err);

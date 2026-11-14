@@ -97,6 +97,24 @@ export const api = {
   kbList: () => request('kb'),
   kbDelete: (id) => del(`kb?id=${encodeURIComponent(id)}`),
 
+  // 作品（登录后保存在服务端；访客的作品只在本机浏览器，见 works.js）
+  works: {
+    list: async () => (await request('works')).works,
+    add: (work) => post('works', work),
+    rename: async (id, title) => (await patch(`works/${id}`, { title })).work,
+    remove: (id) => del(`works/${id}`),
+    clear: () => del('works'),
+    submit: async (id) => (await post(`works/${id}/submit`)).work,
+    withdraw: async (id) => (await post(`works/${id}/withdraw`)).work,
+  },
+
+  // 批改（教师 / 学校管理员）
+  teach: {
+    works: (f) => request(`teach/works${qs(f)}`),
+    review: async (id, body) => (await post(`teach/works/${id}/review`, body)).work,
+    csvUrl: (f) => `api/teach/works.csv${qs(f)}`,
+  },
+
   // 账号
   me: () => request('me'),
   login: (username, password) => post('auth/login', { username, password }),
@@ -113,6 +131,7 @@ export const api = {
     updateTenant: (id, body) => patch(`admin/tenants/${id}`, body),
     deleteTenant: (id) => del(`admin/tenants/${id}`),
     createUser: (tenantId, body) => post(`admin/tenants/${tenantId}/users`, body),
+    importUsers: (tenantId, body) => request(`admin/tenants/${tenantId}/users/import`, { method: 'POST', body, timeoutMs: 60000 }),
     updateUser: (id, body) => patch(`admin/users/${id}`, body),
     resetPassword: (id) => post(`admin/users/${id}/reset-password`),
     deleteUser: (id) => del(`admin/users/${id}`),
@@ -135,6 +154,11 @@ export const api = {
     overview: () => request('org/overview'),
     users: () => request('org/users'),
     createUser: (body) => post('org/users', body),
+    importUsers: (body) => request('org/users/import', { method: 'POST', body, timeoutMs: 60000 }),
+    classes: () => request('org/classes'),
+    createClass: (body) => post('org/classes', body),
+    updateClass: (id, body) => patch(`org/classes/${id}`, body),
+    deleteClass: (id) => del(`org/classes/${id}`),
     updateUser: (id, body) => patch(`org/users/${id}`, body),
     resetPassword: (id) => post(`org/users/${id}/reset-password`),
     deleteUser: (id) => del(`org/users/${id}`),

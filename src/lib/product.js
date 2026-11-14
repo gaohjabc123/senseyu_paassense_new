@@ -53,6 +53,16 @@ export const ORG_NAV = { id: 'org', label: '企业管理', items: [
   { id: 'org/api', label: 'API 接入', icon: '⌘' },
   { id: 'org/logs', label: '使用日志', icon: '≡' },
 ] };
+/** 院校客户的管理员导航：多出「班级管理」，称呼换成学校 */
+export const SCHOOL_ORG_NAV = { id: 'org', label: '学校管理', items: [
+  { id: 'org', label: '学校概览', icon: '▣' },
+  { id: 'org/classes', label: '班级管理', icon: '▥' },
+  { id: 'org/users', label: '师生账号', icon: '☺' },
+  { id: 'org/api', label: 'API 接入', icon: '⌘' },
+  { id: 'org/logs', label: '使用日志', icon: '≡' },
+] };
+/** 教学导航：教师与学校管理员可见 */
+export const TEACH_NAV = { id: 'teach', label: '教学', items: [{ id: 'teach', label: '作品批改', icon: '✎' }] };
 export const ADMIN_NAV = { id: 'admin', label: '平台管理', items: [
   { id: 'admin', label: '运营总览', icon: '▣' },
   { id: 'admin/tenants', label: '客户管理', icon: '☷' },
@@ -62,19 +72,30 @@ export const ADMIN_NAV = { id: 'admin', label: '平台管理', items: [
 export const ACCOUNT_NAV = { id: 'account', label: '我的账号', items: [{ id: 'account', label: '账号与密码', icon: '⚙' }] };
 
 /** 当前角色可见的导航分组 */
-export function navFor(role) {
+export function navFor(role, { isSchool = false } = {}) {
   const out = [...NAV_SECTIONS];
-  if (role === 'tenant_admin') out.push(ORG_NAV);
+  if (isSchool && (role === 'teacher' || role === 'tenant_admin')) out.push(TEACH_NAV);
+  if (role === 'tenant_admin') out.push(isSchool ? SCHOOL_ORG_NAV : ORG_NAV);
   if (role === 'super_admin') out.push(ADMIN_NAV);
   if (role) out.push(ACCOUNT_NAV);
   return out;
 }
 
-export const ALL_NAV = [...NAV_SECTIONS, ORG_NAV, ADMIN_NAV, ACCOUNT_NAV].flatMap((s) => s.items.map((i) => ({ ...i, section: s.id, sectionLabel: s.label })));
+export const ALL_NAV = [...NAV_SECTIONS, TEACH_NAV, SCHOOL_ORG_NAV, ADMIN_NAV, ACCOUNT_NAV].flatMap((s) => s.items.map((i) => ({ ...i, section: s.id, sectionLabel: s.label })));
 export const navById = (id) => ALL_NAV.find((n) => n.id === id);
 export const SITE_VIEWS = NAV_SECTIONS[0].items.map((i) => i.id);
 export const DEFAULT_VIEW = 'home';
-export const ROLE_LABEL = { super_admin: '超级管理员', tenant_admin: '企业管理员', member: '成员' };
+export const ROLE_LABEL = { super_admin: '超级管理员', tenant_admin: '企业管理员', teacher: '教师', member: '成员' };
+export const SCHOOL_ROLE_LABEL = { super_admin: '超级管理员', tenant_admin: '学校管理员', teacher: '教师', member: '学生' };
+export const roleLabel = (role, isSchool) => (isSchool ? SCHOOL_ROLE_LABEL : ROLE_LABEL)[role] || role;
+/** 客户类别：院校比企业多出班级、教师、作品提交与批改 */
+export const ORG_TYPES = [
+  { id: 'enterprise', label: '企业', hint: '成员直接使用工作台与开放接口' },
+  { id: 'vocational', label: '高职院校', hint: '班级实训：学生提交作品，教师批改留档' },
+  { id: 'applied', label: '应用型本科', hint: '项目制教学与开放接口二次开发' },
+  { id: 'university', label: '本科院校', hint: '通识课与课程助教' },
+];
+export const orgTypeLabel = (id) => ORG_TYPES.find((t) => t.id === id)?.label || '企业';
 /** 创作中心三条快捷链路依赖的能力模块（与服务端 SHORTCUT_MODULE 一致） */
 export const SHORTCUT_MODULE = { video: 'video-image', voice: 'voice-tts', chat: 'nlp-chat' };
 

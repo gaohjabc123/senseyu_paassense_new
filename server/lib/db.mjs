@@ -1,5 +1,6 @@
 // db.mjs —— 业务数据库（Node 内置 node:sqlite，零第三方依赖）
 // 表：tenants 客户 · users 账号 · sessions 登录会话 · vendors 厂商凭据 · logs 使用/审计日志
+//     classes 班级（院校客户）· works 作品（服务端持久化，可提交给教师批改）
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -45,13 +46,43 @@ const SCHEMA = [
     vendor_id TEXT, tenant_id TEXT, ref TEXT, actor TEXT, note TEXT)`,
   `CREATE INDEX IF NOT EXISTS idx_ledger_tenant ON quota_ledger(tenant_id, id)`,
   `CREATE INDEX IF NOT EXISTS idx_ledger_vendor ON quota_ledger(vendor_id, id)`,
+  // 班级：院校客户的教学组织（学校 → 班级 → 学生），每个班可指定一位教师
+  `CREATE TABLE IF NOT EXISTS classes (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, teacher_id TEXT DEFAULT NULL,
+    created_at INTEGER NOT NULL, created_by TEXT,
+    UNIQUE (tenant_id, name),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE)`,
+  // 作品：登录用户的产出保存在服务端，换电脑不丢；学生可提交给教师，教师评分与评语
+  `CREATE TABLE IF NOT EXISTS works (
+    id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT NOT NULL, kind TEXT NOT NULL, type TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL, url TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', duration REAL, mode TEXT NOT NULL DEFAULT 'mock',
+    created_at INTEGER NOT NULL, submitted_at INTEGER, class_id TEXT,
+    score INTEGER, comment TEXT, reviewed_by TEXT, reviewed_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)`,
+  `CREATE INDEX IF NOT EXISTS idx_works_user ON works(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_works_class ON works(class_id, submitted_at)`,
 ];
+
+// 老数据库升级：CREATE TABLE IF NOT EXISTS 不会给已有的表加列，这里按需补列（幂等）
+const COLUMNS = [
+  ['tenants', 'org_type', `TEXT NOT NULL DEFAULT 'enterprise'`], // enterprise 企业 | vocational 高职 | applied 应用型本科 | university 本科
+  ['users', 'class_id', 'TEXT DEFAULT NULL'],
+];
+
+function migrate(db) {
+  for (const [table, col, ddl] of COLUMNS) {
+    const has = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+    if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_users_class ON users(class_id)');
+}
 
 export function openDb(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 3000;');
   for (const sql of SCHEMA) db.exec(sql);
+  migrate(db);
   return db;
 }
 

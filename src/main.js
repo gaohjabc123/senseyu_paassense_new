@@ -6,7 +6,7 @@ import { PRODUCT, DEFAULT_VIEW, SITE_VIEWS, navById, SHORTCUT_MODULE } from './l
 import { TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone } from './lib/guide.js';
 import { validateText, estimateSeconds, stageLabel } from './lib/wizard.js';
 import { api, ApiError, getMode, setMode, pollTask, uploadKb, chatStream, toApiError } from './lib/api.js';
-import { listWorks, addWork, removeWork, renameWork, clearWorks, getWork } from './lib/works.js';
+import { listWorks, addWork, removeWork, renameWork, clearWorks } from './lib/works.js';
 import { capById } from './lib/capabilities.js';
 import { words } from './lib/html.js';
 import * as V from './lib/views.js';
@@ -30,7 +30,7 @@ const state = {
   chat: { messages: [], input: '', streaming: false, abort: null, lastQuestion: '' },
   exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null },
   token: { loading: false, data: null, error: null },
-  works: listWorks(),
+  works: listWorks(), worksError: null, localWorkCount: 0,
   dialog: null,
   tour: -1,
   me: null, route: { view: DEFAULT_VIEW },
@@ -57,11 +57,12 @@ function updateTopbar() {
   envSwitch.classList.toggle('is-demo', state.mode !== 'real');
   envLabel.textContent = !state.config && !state.configError ? '读取环境…' : state.mode === 'real' ? '真实环境' : '演示环境';
   envSwitch.setAttribute('aria-label', `当前${envLabel.textContent}，点击切换运行环境`);
-  const key = JSON.stringify([state.me?.user?.id, state.me?.user?.displayName, state.me?.tenant?.name]);
+  const key = JSON.stringify([state.me?.user?.id, state.me?.user?.displayName, state.me?.tenant?.name, state.me?.user?.role]);
   if (key !== userSlotKey) { userSlotKey = key; userSlot.innerHTML = V.userSlotHtml(state.me); }
 }
 
 /* ================= 渲染：只更新内容区 ================= */
+const adminTitle = (v) => { const r = ADMIN_ROUTES[v]; return r ? (state.me?.teaching?.isSchool && r.schoolTitle) || r.title : ''; };
 const CONSOLE_TITLE = { overview: '工作台总览', create: '创作中心', tasks: '我的作品', catalog: '能力目录', settings: '环境与配置', experience: '能力体验' };
 const isSiteLayout = (v) => SITE_VIEWS.includes(v) || v === 'login';
 const isWorkspace = (v) => ['overview', 'create', 'tasks', 'catalog', 'settings', 'experience'].includes(v);
@@ -97,7 +98,7 @@ function render() {
   viewRoot.className = `view-root ${isSite ? 'view-root--site' : 'view-root--console'}`;
   viewRoot.innerHTML = isSite
     ? `<main id="main" tabindex="-1" class="site-main">${banner}${pageHtml()}</main>`
-    : `<div class="console-shell${state.navCollapsed ? ' nav-collapsed' : ''}">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${V.consoleBar(state, CONSOLE_TITLE[state.view] || ADMIN_ROUTES[state.view]?.title || '工作台')}${pageHtml()}</main></div>`;
+    : `<div class="console-shell${state.navCollapsed ? ' nav-collapsed' : ''}">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${V.consoleBar(state, CONSOLE_TITLE[state.view] || adminTitle(state.view) || '工作台')}${pageHtml()}</main></div>`;
 
   overlayRoot.innerHTML = state.dialog?.type === 'cred' ? credentialDialog(state.dialog)
     : state.dialog?.type === 'mode' ? V.modeDialog(state)
@@ -128,7 +129,6 @@ function toast(msg) {
   setTimeout(() => el.remove(), 2800);
 }
 function updateWorksBadge() {
-  state.works = listWorks();
   const link = viewRoot.querySelector('.sidenav [data-view="tasks"]');
   if (!link) return;
   let em = link.querySelector('em');
@@ -136,10 +136,52 @@ function updateWorksBadge() {
   em.textContent = String(state.works.length);
   em.setAttribute('aria-label', `${state.works.length} 个作品`);
 }
-function saved(persisted, btn) {
+
+/* ================= 作品：登录后保存在账号里（服务端），访客保存在本机浏览器 ================= */
+const remoteWorks = () => !!state.me?.user;
+const decorateWork = (w) => ({ ...w, remote: true, days: null, createdAt: new Date(w.at).toLocaleString('zh-CN', { hour12: false }) });
+const worksKey = () => JSON.stringify(state.works.map((w) => [w.id, w.title, w.submittedAt, w.review?.at]));
+const findWork = (id) => state.works.find((w) => w.id === id) || null;
+
+/** 重新读取作品列表；返回列表是否有变化（用于决定要不要重渲染） */
+async function reloadWorks() {
+  const before = worksKey();
+  if (!remoteWorks()) { state.works = listWorks(); state.worksError = null; state.localWorkCount = 0; }
+  else {
+    try { state.works = (await api.works.list()).map(decorateWork); state.worksError = null; }
+    catch (e) { state.worksError = toApiError(e); }
+    state.localWorkCount = listWorks().length; // 这台电脑上未登录时保存的作品，可以导入到账号
+  }
   updateWorksBadge();
-  toast(persisted ? '已保存到「我的作品」，7 天内可在本机找回' : '浏览器禁止本地存储，作品只在本次打开期间有效');
+  return before !== worksKey();
+}
+
+/** 保存一条作品；返回 { ok, duplicate, remote, persisted, error } */
+async function saveWork(input) {
+  if (!remoteWorks()) {
+    const r = addWork(input);
+    state.works = listWorks(); updateWorksBadge();
+    return { ok: true, duplicate: !!r.duplicate, remote: false, persisted: r.persisted };
+  }
+  try {
+    const r = await api.works.add(input);
+    if (!r.duplicate) state.works = [decorateWork(r.work), ...state.works];
+    updateWorksBadge();
+    return { ok: true, duplicate: r.duplicate, remote: true, persisted: true };
+  } catch (e) { return { ok: false, error: toApiError(e) }; }
+}
+
+function saved(r, btn) {
+  if (!r.ok) { toast(`没有保存成功：${r.error.message}${r.error.hint ? ` ${r.error.hint}` : ''}`); return; }
+  toast(r.remote ? (r.duplicate ? '这条作品已经在「我的作品」里了' : '已保存到「我的作品」，换电脑登录也能找回')
+    : r.persisted ? '已保存到「我的作品」，7 天内可在本机找回；登录后保存可长期保留' : '浏览器禁止本地存储，作品只在本次打开期间有效');
   if (btn) { btn.textContent = '已保存'; btn.disabled = true; }
+}
+
+/** 对一条服务端作品执行操作（改名 / 删除 / 提交 / 撤回），失败时给出可读提示 */
+async function workOp(fn, okText) {
+  try { await fn(); await reloadWorks(); render(); if (okText) toast(okText); }
+  catch (e) { const err = toApiError(e); toast(err.message + (err.hint ? ` ${err.hint}` : '')); }
 }
 
 /* ================= 路由（hash） ================= */
@@ -168,7 +210,7 @@ function applyRoute() {
     state.exp.abort?.abort();
     state.exp = { capId: r.capId, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null };
   }
-  if (r.view === 'tasks' || r.view === 'overview') state.works = listWorks();
+  if (r.view === 'tasks' || r.view === 'overview') reloadWorks().then((changed) => { if (changed && state.view === r.view && !state.dialog) render(); });
   if (r.view === 'create' && state.me) {
     const allowed = ['video', 'voice', 'chat'].filter((k) => V.canUse(state, SHORTCUT_MODULE[k]));
     if (allowed.length && !allowed.includes(state.createTab)) state.createTab = allowed[0];
@@ -210,6 +252,7 @@ async function refreshMe(me) {
     state.kb = freshKb(); state.chat.messages = []; state.adm = initialAdminState(); state.token = { loading: false, data: null, error: null };
   }
   if (state.mode === 'real' && !state.me.access?.canReal) { setMode('mock'); state.mode = 'mock'; }
+  await reloadWorks();
   seedCompletedProbeTasks();
   syncTaskHistory();
   await loadConfig();
@@ -280,7 +323,7 @@ async function pollVideo() {
       },
     });
     Object.assign(v, { phase: 'done', result, abort: null });
-    const autoSaved = autoSaveVideo(result, v.text);
+    const autoSaved = await autoSaveVideo(result, v.text);
     renderIf('create', 'video');
     toast(autoSaved ? '视频生成完成，已自动保存到我的作品' : '视频生成完成');
   } catch (e) {
@@ -390,7 +433,7 @@ async function runExperience() {
     if (r.sync) { e.result = r.result; }
     else { e.taskId = r.taskId; rememberTaskId(e.taskId, 'experience'); e.result = await pollExperience(); }
     e.running = false;
-    const expAutoSaved = autoSaveExperience();
+    const expAutoSaved = await autoSaveExperience();
     if (state.view === 'experience') { render(); document.getElementById('exp-result-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
     if (expAutoSaved) toast('已自动保存到我的作品');
   } catch (err) {
@@ -427,14 +470,13 @@ async function resumeExperience() {
 
 /** 任务完成自动保存：只存真实环境的媒体结果，演示样例不自动进作品。
  * 返回 true 表示新存了一条；已存在（去重）或不满足条件返回 false。 */
-function autoSaveVideo(result, text) {
+async function autoSaveVideo(result, text) {
   if (!result || result.mode !== 'real' || !result.videoUrl) return false;
-  const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: String(text || '').slice(0, 20) || '视频口播', url: result.videoUrl, duration: result.duration, mode: result.mode });
-  if (!duplicate) { state.works = listWorks(); updateWorksBadge(); return true; }
-  return false;
+  const r = await saveWork({ kind: 'video', type: '视频口播', title: String(text || '').slice(0, 20) || '视频口播', url: result.videoUrl, duration: result.duration, mode: result.mode });
+  return r.ok && !r.duplicate;
 }
 
-function autoSaveExperience() {
+async function autoSaveExperience() {
   const r = state.exp.result;
   const cap = capById(state.exp.capId);
   if (!r || !cap || r.mode !== 'real') return false;
@@ -442,20 +484,19 @@ function autoSaveExperience() {
   if (!url) return false; // 纯文字结果不自动保存，手动点保存才进作品
   const out = r.output;
   const kind = ['video', 'audio', 'image'].includes(out) ? out : 'text';
-  const { duplicate } = addWork({
+  const res = await saveWork({
     kind, type: cap.name, title: r.title || cap.name, mode: r.mode, url,
     text: kind === 'text' ? (r.jsonText || r.text || '') : '',
     duration: r.duration || (r.durationMs ? r.durationMs / 1000 : null),
   });
-  if (!duplicate) { state.works = listWorks(); updateWorksBadge(); return true; }
-  return false;
+  return res.ok && !res.duplicate;
 }
 
 /** 一次性补录：把平台上已知的已完成视频任务补进作品（超管首次打开时）。
  * 2026-11-13：除 11-11 三个测试任务外，7023071 与 7023472 也已完成（12.24 秒），
  * 一并补录；用新 flag（v2），已跑过旧版补录的用户也会再跑一次补齐新增的两条。
  * 只跑一次，其他用户不受影响；按 URL 去重，已在作品里的不会重复。 */
-function seedCompletedProbeTasks() {
+async function seedCompletedProbeTasks() {
   const FLAG = 'ruying_works_seeded_20261113_v2';
   try {
     if (state.me?.access?.kind !== 'super' || localStorage.getItem(FLAG)) return;
@@ -466,10 +507,8 @@ function seedCompletedProbeTasks() {
       { title: '口播 7023071（默认图实测）', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/960c18fd-0e2e-4bc8-bbcf-def8f6ab6064/960c18fd-0e2e-4bc8-bbcf-def8f6ab6064.mp4', duration: 12.24 },
       { title: '口播 7023472（智能手表）', url: 'https://oss-aigc-prod.softsugar.com/single-img-vid/download/617/e25e1544-0076-4023-80f9-7ee6f76f8aea/e25e1544-0076-4023-80f9-7ee6f76f8aea.mp4', duration: 12.24 },
     ];
-    let added = 0;
-    for (const s of seeds) { const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: s.title, url: s.url, duration: s.duration, mode: 'real' }); if (!duplicate) added += 1; }
     localStorage.setItem(FLAG, '1');
-    if (added) { state.works = listWorks(); updateWorksBadge(); }
+    for (const s of seeds) await saveWork({ kind: 'video', type: '视频口播', title: s.title, url: s.url, duration: s.duration, mode: 'real' });
   } catch { /* 本地存储不可用时静默跳过 */ }
 }
 
@@ -498,33 +537,28 @@ async function syncTaskHistory() {
     const raw = JSON.parse(localStorage.getItem(TASK_HISTORY_KEY) || '[]');
     const list = Array.isArray(raw) ? raw : [];
     if (!list.length) return;
-    let added = 0;
     for (const item of list) {
       try {
         const t = await api.task(item.id);
-        if (t?.status === 5 && t?.result?.videoUrl) {
-          const { duplicate } = addWork({ kind: 'video', type: '视频口播', title: `口播 ${item.id}`, url: t.result.videoUrl, duration: t.result.duration, mode: 'real' });
-          if (!duplicate) added += 1;
-        }
+        if (t?.status === 5 && t?.result?.videoUrl) await saveWork({ kind: 'video', type: '视频口播', title: `口播 ${item.id}`, url: t.result.videoUrl, duration: t.result.duration, mode: 'real' });
       } catch { /* 单个任务查失败就跳过，不影响其他 */ }
     }
-    if (added) { state.works = listWorks(); updateWorksBadge(); }
   } catch { /* 静默跳过 */ }
 }
 
-function saveExperience(btn) {
+async function saveExperience(btn) {
   const r = state.exp.result;
   const cap = capById(state.exp.capId);
   if (!r || !cap) return;
   const out = r.output;
   const kind = ['video', 'audio', 'image'].includes(out) ? out : 'text';
-  const { persisted } = addWork({
+  const res = await saveWork({
     kind, type: cap.name, title: r.title || cap.name, mode: r.mode,
     url: r.videoUrl || r.audioUrl || r.imageUrl || '',
     text: kind === 'text' ? (r.jsonText || r.text || '') : '',
     duration: r.duration || (r.durationMs ? r.durationMs / 1000 : null),
   });
-  saved(persisted, btn);
+  saved(res, btn);
 }
 
 function copyExperience() {
@@ -576,23 +610,48 @@ const actions = {
   'run-video': runVideo,
   'stop-video': () => state.video.abort?.abort(),
   'resume-video': resumeVideo,
-  'save-video': (btn) => {
+  'save-video': async (btn) => {
     const r = state.video.result; if (!r) return;
-    saved(addWork({ kind: 'video', type: '视频口播', title: state.video.text.slice(0, 20), url: r.videoUrl, duration: r.duration, mode: r.mode }).persisted, btn);
+    saved(await saveWork({ kind: 'video', type: '视频口播', title: state.video.text.slice(0, 20), url: r.videoUrl, duration: r.duration, mode: r.mode }), btn);
   },
   'run-voice': runVoice,
-  'save-voice': (btn) => {
+  'save-voice': async (btn) => {
     const r = state.voice.result; if (!r) return;
-    saved(addWork({ kind: 'audio', type: '语音合成', title: state.voice.text.slice(0, 20), url: r.audio_url, duration: r.duration_ms / 1000, mode: r.mode }).persisted, btn);
+    saved(await saveWork({ kind: 'audio', type: '语音合成', title: state.voice.text.slice(0, 20), url: r.audio_url, duration: r.duration_ms / 1000, mode: r.mode }), btn);
   },
   'kb-reload': () => loadKb(true),
   'chat-send': () => sendChat(),
   'chat-stop': () => state.chat.abort?.abort(),
   'chat-retry': () => sendChat(state.chat.lastQuestion),
-  'works-clear': () => {
-    if (!window.confirm('确认清空全部作品记录？只会清除本机记录，不影响平台上的文件。')) return;
-    clearWorks(); state.works = []; render(); toast('已清空');
+  'works-clear': async () => {
+    if (!remoteWorks()) {
+      if (!window.confirm('确认清空全部作品记录？只会清除本机记录，不影响平台上的文件。')) return;
+      clearWorks(); state.works = []; render(); toast('已清空');
+      return;
+    }
+    if (!window.confirm('确认清空账号里的全部作品？已提交但未批改的作品会一并撤回并删除；已批改的作品会保留。')) return;
+    try { const r = await api.works.clear(); await reloadWorks(); render(); toast(r.kept ? `已清空，保留了 ${r.kept} 条已批改的作品` : '已清空'); }
+    catch (e) { toast(toApiError(e).message); }
   },
+  'works-reload': async () => { await reloadWorks(); render(); },
+  // 把这台电脑上未登录时保存的作品导入到当前账号（按地址去重），导入后清掉本机记录
+  'works-import-local': async () => {
+    const local = listWorks();
+    if (!local.length) return;
+    if (!window.confirm(`把这台电脑上未登录时保存的 ${local.length} 条作品导入到你的账号？如果这些不是你的作品，请点「取消」。`)) return;
+    let done = 0;
+    for (const w of local.slice().reverse()) {
+      try { const r = await api.works.add({ kind: w.kind, type: w.type, title: w.title, url: w.url, text: w.text, duration: w.duration, mode: w.mode }); if (!r.duplicate) done += 1; } catch { /* 单条失败跳过 */ }
+    }
+    clearWorks();
+    await reloadWorks(); render(); toast(`已导入 ${done} 条作品`);
+  },
+  'work-submit': (el) => {
+    const w = findWork(el.dataset.id); if (!w) return;
+    if (!window.confirm(`把「${w.title}」提交给老师批改？批改前可以撤回。`)) return;
+    workOp(() => api.works.submit(w.id), '已提交，等待老师批改');
+  },
+  'work-withdraw': (el) => { const w = findWork(el.dataset.id); if (w) workOp(() => api.works.withdraw(w.id), '已撤回'); },
   'exp-run': runExperience,
   'exp-stop': () => state.exp.abort?.abort(),
   'exp-resume': resumeExperience,
@@ -607,7 +666,7 @@ const actions = {
 };
 
 document.addEventListener('click', (ev) => {
-  const t = ev.target.closest('[data-action],[data-group],[data-filter],[data-use],[data-experience],[data-create],[data-mode],[data-del],[data-rename],[data-work-view],[data-kb-del],[data-skip],[data-module],[data-module-group],[data-module-all],[data-quick-days],[data-quick-extend],[data-user-act],[data-vendor-act],[data-key-revoke]');
+  const t = ev.target.closest('[data-action],[data-group],[data-filter],[data-use],[data-experience],[data-create],[data-mode],[data-del],[data-rename],[data-work-view],[data-kb-del],[data-skip],[data-module],[data-module-group],[data-module-all],[data-quick-days],[data-quick-extend],[data-user-act],[data-vendor-act],[data-key-revoke],[data-class-act],[data-teach-view],[data-teach-save]');
   if (!t) return;
   if (admin.click(t)) return;
   const d = t.dataset;
@@ -627,20 +686,23 @@ document.addEventListener('click', (ev) => {
   }
   if (d.mode) { if (d.mode !== state.mode) { state.dialog = { type: 'mode' }; render(); } return; }
   if (d.del) {
-    if (!window.confirm('确认删除这条作品记录？')) return;
+    const w = findWork(d.del); if (!w) return;
+    if (!window.confirm(w.submittedAt ? '这条作品已提交给老师，删除后老师将看不到它。确认删除？' : '确认删除这条作品记录？')) return;
+    if (w.remote) { workOp(() => api.works.remove(w.id), '已删除'); return; }
     removeWork(d.del); state.works = listWorks(); render(); toast('已删除');
     return;
   }
   if (d.rename) {
-    const w = getWork(d.rename);
+    const w = findWork(d.rename);
     if (!w) return;
     const name = window.prompt('给作品改个名字', w.title);
     if (name === null) return;
-    if (!renameWork(d.rename, name)) { toast('名字不能为空'); return; }
-    state.works = listWorks(); render(); toast('已改名');
+    if (!name.trim()) { toast('名字不能为空'); return; }
+    if (w.remote) { workOp(() => api.works.rename(w.id, name), '已改名'); return; }
+    renameWork(d.rename, name); state.works = listWorks(); render(); toast('已改名');
     return;
   }
-  if (d.workView) { const w = getWork(d.workView); if (w) { state.dialog = { type: 'work', work: w }; render(); } return; }
+  if (d.workView) { const w = findWork(d.workView); if (w) { state.dialog = { type: 'work', work: w }; render(); } return; }
   if (d.kbDel) deleteDoc(d.kbDel);
 });
 
@@ -694,6 +756,7 @@ document.addEventListener('change', (ev) => {
     const obj = parts.reduce((o, k) => o?.[k], state);
     if (obj) { obj[key] = el.value; if (el.dataset.live !== undefined) render(); }
   }
+  if (admin.change(el)) return;
   if (ev.target.id === 'kb-file') { uploadFiles(ev.target.files); ev.target.value = ''; }
 });
 

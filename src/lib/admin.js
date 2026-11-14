@@ -2,7 +2,7 @@
 import { api, toApiError } from './api.js';
 import { esc } from './html.js';
 import { errorBlock, loadingBlock } from './views.js';
-import { ROLE_LABEL } from './product.js';
+import { roleLabel, ORG_TYPES, orgTypeLabel } from './product.js';
 import { CAPABILITIES, GROUPS, capById } from './capabilities.js';
 
 /* ================= 工具 ================= */
@@ -18,6 +18,8 @@ export const ACTION_LABEL = {
   'tenant.create': '创建客户', 'tenant.update': '修改客户', 'tenant.delete': '删除客户', 'user.create': '添加账号', 'user.update': '修改账号',
   'user.reset_password': '重置密码', 'user.delete': '删除账号', 'vendor.create': '添加厂商凭据', 'vendor.update': '修改厂商凭据',
   'vendor.delete': '删除厂商凭据', 'vendor.token': '获取厂商 Token',
+  'user.import': '批量导入账号', 'class.create': '新建班级', 'class.update': '修改班级', 'class.delete': '删除班级',
+  'work.submit': '提交作品', 'work.withdraw': '撤回作品', 'work.review': '批改作品',
   'key.create': '签发 API 密钥', 'key.revoke': '吊销 API 密钥', 'quota.purchase': '采购入账', 'quota.allocate': '分配额度', 'quota.reclaim': '回收额度',
 };
 const CATEGORY_LABEL = { usage: '门户使用', api: '开放接口', auth: '登录', admin: '管理' };
@@ -100,8 +102,9 @@ export function accountView(s) {
         <table class="table kv-table"><tbody>
           <tr><th scope="row">用户名</th><td>${esc(u.username)}</td></tr>
           <tr><th scope="row">姓名</th><td>${esc(u.displayName || '—')}</td></tr>
-          <tr><th scope="row">角色</th><td>${esc(ROLE_LABEL[u.role] || u.role)}</td></tr>
-          ${s.me.tenant ? `<tr><th scope="row">所属企业</th><td>${esc(s.me.tenant.name)}</td></tr>
+          <tr><th scope="row">角色</th><td>${esc(roleLabel(u.role, isSchool(s)))}</td></tr>
+          ${isSchool(s) && u.role === 'member' ? `<tr><th scope="row">班级</th><td>${u.className ? esc(u.className) : '<span class="muted">未分班</span>'}</td></tr>` : ''}
+          ${s.me.tenant ? `<tr><th scope="row">${isSchool(s) ? '所属学校' : '所属企业'}</th><td>${esc(s.me.tenant.name)}</td></tr>
           <tr><th scope="row">有效期</th><td>${esc(s.me.tenant.startsDay)} 至 ${esc(s.me.tenant.expiresDay)} ${tenantStatusPill(s.me.tenant)}</td></tr>` : ''}
         </tbody></table>
         <div class="actions"><button class="btn" type="button" data-action="logout">退出登录</button></div>
@@ -123,10 +126,22 @@ export function loginRequired(text = '这个页面需要登录后查看。') {
   return `<div class="console"><div class="card"><div class="empty"><p class="empty__title">请先登录</p><p>${esc(text)}</p>
     <div class="empty__action"><a class="btn btn--primary btn--sm" href="#login" data-view="login">去登录</a></div></div></div></div>`;
 }
+const isSchool = (s) => !!s.me?.teaching?.isSchool;
 const forbidden = () => '<div class="console"><div class="card"><div class="empty"><p class="empty__title">没有权限</p><p>这个页面只对管理员开放。</p></div></div></div>';
 
 /** 一次性显示新账号/重置后的初始密码 */
 export function credentialDialog(c) {
+  if (c.list) {
+    return `<div class="sheet-mask"></div>
+  <div class="sheet sheet--wide" role="dialog" aria-modal="true" aria-labelledby="cred-title">
+    <h3 id="cred-title">${esc(c.title)}</h3>
+    <p class="muted">请下载账号清单并安全地分发给本人。<b>初始密码只显示这一次</b>，关闭后无法再查看（可以逐个重置）；每个人首次登录后都需要修改密码。</p>
+    ${c.classesCreated?.length ? `<p class="field-hint">已自动新建班级：${c.classesCreated.map(esc).join('、')}。记得在「班级管理」里指定任课教师。</p>` : ''}
+    <div class="table-scroll cred-list"><table class="table admin-table"><thead><tr><th scope="col">用户名</th><th scope="col">姓名</th><th scope="col">班级</th><th scope="col">初始密码</th></tr></thead><tbody>
+      ${c.list.map((u) => `<tr><td><code>${esc(u.username)}</code></td><td>${esc(u.displayName || '—')}</td><td>${esc(u.className || '—')}</td><td><code class="cred-pass">${esc(u.initialPassword)}</code></td></tr>`).join('')}</tbody></table></div>
+    <div class="actions"><button class="btn btn--primary" type="button" data-action="cred-download" data-autofocus>下载账号清单（CSV）</button>
+      <button class="btn" type="button" data-action="cred-close">我已保存，关闭</button></div></div>`;
+  }
   if (c.secret) {
     return `<div class="sheet-mask"></div>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="cred-title">
@@ -161,33 +176,66 @@ function statsCards(u) {
     </div>`;
 }
 
-function usersTable(users, { selfId, scope }) {
+function usersTable(users, { selfId, scope, school = false, classes = [] }) {
   if (!users.length) return '<div class="empty"><p class="empty__title">还没有账号</p></div>';
-  return `<div class="table-scroll"><table class="table admin-table"><thead><tr><th scope="col">账号</th><th scope="col">角色</th><th scope="col">状态</th><th scope="col">最近登录</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody>
+  const roleCell = (u) => (!school || u.id === selfId ? esc(roleLabel(u.role, school))
+    : `<select class="input input--sm" data-user-role data-id="${u.id}" data-scope="${scope}" data-name="${esc(u.username)}" data-current="${u.role}" aria-label="${esc(u.username)} 的角色">
+        ${['member', 'teacher', 'tenant_admin'].map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${roleLabel(r, true)}</option>`).join('')}</select>`);
+  const classCell = (u) => (u.role !== 'member' ? '<span class="muted">—</span>'
+    : `<select class="input input--sm" data-user-class data-id="${u.id}" data-scope="${scope}" aria-label="${esc(u.username)} 的班级">
+        <option value="">未分班</option>${classes.map((c) => `<option value="${c.id}" ${u.classId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`);
+  return `<div class="table-scroll"><table class="table admin-table"><thead><tr><th scope="col">账号</th><th scope="col">角色</th>${school ? '<th scope="col">班级</th>' : ''}<th scope="col">状态</th><th scope="col">最近登录</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody>
     ${users.map((u) => `<tr>
       <td><b>${esc(u.username)}</b>${u.displayName ? `<small class="cell-scene">${esc(u.displayName)}</small>` : ''}${u.id === selfId ? ' <span class="tag">我</span>' : ''}</td>
-      <td>${esc(ROLE_LABEL[u.role])}</td>
+      <td>${roleCell(u)}</td>${school ? `<td>${classCell(u)}</td>` : ''}
       <td>${u.status === 'active' ? (u.mustChangePassword ? pill('pill--warn', '待改初始密码') : pill('pill--ok', '正常')) : pill('pill--err', '已停用')}</td>
       <td class="muted">${fmtTime(u.lastLoginAt)}</td>
       <td><div class="row-actions">${u.id === selfId ? '' : `
         <button class="btn btn--sm" type="button" data-user-act="reset" data-id="${u.id}" data-scope="${scope}" data-name="${esc(u.username)}">重置密码</button>
         <button class="btn btn--sm" type="button" data-user-act="${u.status === 'active' ? 'disable' : 'enable'}" data-id="${u.id}" data-scope="${scope}" data-name="${esc(u.username)}">${u.status === 'active' ? '停用' : '启用'}</button>
-        <button class="btn btn--sm" type="button" data-user-act="${u.role === 'tenant_admin' ? 'demote' : 'promote'}" data-id="${u.id}" data-scope="${scope}" data-name="${esc(u.username)}">${u.role === 'tenant_admin' ? '设为成员' : '设为管理员'}</button>
+        ${school ? '' : `<button class="btn btn--sm" type="button" data-user-act="${u.role === 'tenant_admin' ? 'demote' : 'promote'}" data-id="${u.id}" data-scope="${scope}" data-name="${esc(u.username)}">${u.role === 'tenant_admin' ? '设为成员' : '设为管理员'}</button>`}
         <button class="btn btn--sm btn--danger" type="button" data-user-act="delete" data-id="${u.id}" data-scope="${scope}" data-name="${esc(u.username)}">删除</button>`}</div></td>
     </tr>`).join('')}</tbody></table></div>`;
 }
 
-function userCreateForm(s, scope, full) {
+function userCreateForm(s, scope, full, { school = false, classes = [] } = {}) {
   const f = s.adm.userForm;
+  const roles = school ? ['member', 'teacher', 'tenant_admin'] : ['member', 'tenant_admin'];
   return `<form class="inline-form" data-form="user-create" data-scope="${scope}" novalidate>
     <div class="form-field"><label for="nu-name">用户名</label><input class="input" id="nu-name" data-bind="adm.userForm.username" value="${esc(f.username)}" placeholder="字母开头，3～32 位" ${full ? 'disabled' : ''} /></div>
     <div class="form-field"><label for="nu-display">姓名（可选）</label><input class="input" id="nu-display" data-bind="adm.userForm.displayName" value="${esc(f.displayName)}" ${full ? 'disabled' : ''} /></div>
     <div class="form-field"><label for="nu-role">角色</label><select class="input" id="nu-role" data-bind="adm.userForm.role" ${full ? 'disabled' : ''}>
-      <option value="member" ${f.role !== 'tenant_admin' ? 'selected' : ''}>成员</option><option value="tenant_admin" ${f.role === 'tenant_admin' ? 'selected' : ''}>企业管理员</option></select></div>
+      ${roles.map((r) => `<option value="${r}" ${(roles.includes(f.role) ? f.role : 'member') === r ? 'selected' : ''}>${roleLabel(r, school)}</option>`).join('')}</select></div>
+    ${school ? `<div class="form-field"><label for="nu-class">班级（学生）</label><select class="input" id="nu-class" data-bind="adm.userForm.classId" ${full ? 'disabled' : ''}>
+      <option value="">未分班</option>${classes.map((c) => `<option value="${c.id}" ${f.classId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}
     <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${f.busy || full ? 'disabled' : ''}>${f.busy ? '添加中…' : '添加账号'}</button></div>
   </form>
   ${full ? '<p class="field-hint">成员数已达上限，需要更多名额请联系商予科技。</p>' : '<p class="field-hint">添加后会生成一次性初始密码，对方首次登录需要修改。</p>'}
   ${f.error ? errorBlock(f.error) : ''}`;
+}
+
+/** 批量导入：一行一个账号，逗号或制表符分隔（可直接从 Excel 复制粘贴） */
+export function parseRoster(text) {
+  return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    .map((l) => l.split(/[,，\t]/).map((x) => x.trim()))
+    .filter((c) => !/^(用户名|学号|账号|工号)$/.test(c[0])) // 跳过表头
+    .map(([username = '', displayName = '', className = '']) => ({ username, displayName, className }));
+}
+
+function importForm(s, scope, { school = false } = {}) {
+  const f = s.adm.importForm;
+  const n = parseRoster(f.text).length;
+  return `<form data-form="user-import" data-scope="${scope}" novalidate>
+    <div class="form-field"><label for="imp-text">名单（每行一个账号：${school ? '学号或用户名, 姓名, 班级' : '用户名, 姓名'}）</label>
+      <textarea class="editor editor--mono" id="imp-text" rows="6" data-bind="adm.importForm.text" data-live placeholder="${school ? '20260101, 张三, 2026级数字媒体1班&#10;20260102, 李四, 2026级数字媒体1班' : 'zhangsan, 张三&#10;lisi, 李四'}">${esc(f.text)}</textarea></div>
+    <div class="inline-form">
+      <div class="form-field"><label for="imp-prefix">用户名前缀（可选）</label><input class="input" id="imp-prefix" data-bind="adm.importForm.prefix" value="${esc(f.prefix)}" maxlength="12" placeholder="如学校缩写 szpt" /></div>
+      ${school ? `<div class="form-field"><label for="imp-role">导入为</label><select class="input" id="imp-role" data-bind="adm.importForm.role"><option value="member" ${f.role !== 'teacher' ? 'selected' : ''}>学生</option><option value="teacher" ${f.role === 'teacher' ? 'selected' : ''}>教师</option></select></div>` : ''}
+      <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${f.busy || !n ? 'disabled' : ''}>${f.busy ? '导入中…' : n ? `导入 ${n} 个账号` : '导入'}</button></div>
+    </div>
+    <p class="field-hint">可以直接从 Excel 复制粘贴，一次最多 100 个。用户名需以字母开头：${school ? '学号是纯数字时请填写前缀，例如前缀 szpt + 学号 20260101 = 用户名 szpt20260101。名单里的班级不存在时会自动新建。' : '全平台唯一，建议加上企业缩写作为前缀。'}任何一行有问题都不会导入，改好后重新提交即可。</p>
+    ${f.error ? errorBlock(f.error) : ''}
+  </form>`;
 }
 
 function logsPanel(s, scope) {
@@ -264,10 +312,85 @@ export function orgUsersView(s) {
   const d = s.adm.orgUsers;
   if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取成员…')}</div>`;
   const full = d.users.length >= d.maxUsers;
+  const school = !!d.isSchool; const classes = d.classes || [];
   return `<div class="console">
-    <div class="card"><div class="card__title"><h2>添加账号</h2>${pill(full ? 'pill--warn' : 'pill--info', `${d.users.length} / ${d.maxUsers} 人`)}</div>${userCreateForm(s, 'org', full)}</div>
-    <div class="card"><div class="card__title"><h2>企业成员</h2></div>${usersTable(d.users, { selfId: s.me.user.id, scope: 'org' })}
-      <p class="field-hint">停用后对方会立即下线且无法登录；重置密码会生成新的一次性初始密码。企业至少保留一位管理员。</p></div>
+    <div class="card"><div class="card__title"><h2>添加账号</h2>${pill(full ? 'pill--warn' : 'pill--info', `${d.users.length} / ${d.maxUsers} 人`)}</div>${userCreateForm(s, 'org', full, { school, classes })}</div>
+    <div class="card"><div class="card__title"><h2>${school ? '批量导入（开学建班）' : '批量导入'}</h2></div>${importForm(s, 'org', { school })}</div>
+    <div class="card"><div class="card__title"><h2>${school ? '师生账号' : '企业成员'}</h2>${school ? '<a class="btn btn--sm" href="#org/classes" data-view="org/classes">班级管理</a>' : ''}</div>${usersTable(d.users, { selfId: s.me.user.id, scope: 'org', school, classes })}
+      <p class="field-hint">停用后对方会立即下线且无法登录；重置密码会生成新的一次性初始密码。${school ? '学校' : '企业'}至少保留一位管理员。${school ? '删除学生账号会同时删除其作品与成绩，学期结束需要留档时请先在「作品批改」里导出成绩单，或改为停用账号。' : ''}</p></div>
+  </div>`;
+}
+
+/* ================= 视图：班级管理（院校） ================= */
+const notSchool = () => '<div class="console"><div class="card"><div class="empty"><p class="empty__title">班级与批改功能只对院校客户开放</p><p>如需使用，请联系商予科技把客户类别调整为院校。</p></div></div></div>';
+
+export function orgClassesView(s) {
+  if (!isSchool(s)) return notSchool();
+  const d = s.adm.orgClasses;
+  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取班级…')}</div>`;
+  const f = s.adm.classForm;
+  const teacherOptions = (sel) => `<option value="">暂不指定</option>${d.teachers.map((t) => `<option value="${t.id}" ${sel === t.id ? 'selected' : ''}>${esc(t.displayName || t.username)}${t.role === 'tenant_admin' ? '（管理员）' : ''}</option>`).join('')}`;
+  return `<div class="console">
+    <div class="card"><div class="card__title"><h2>新建班级</h2></div>
+      <form class="inline-form" data-form="class-create" novalidate>
+        <div class="form-field"><label for="cf-name">班级名称</label><input class="input" id="cf-name" data-bind="adm.classForm.name" value="${esc(f.name)}" maxlength="40" placeholder="如 2026级数字媒体1班" /></div>
+        <div class="form-field"><label for="cf-teacher">任课教师</label><select class="input" id="cf-teacher" data-bind="adm.classForm.teacherId">${teacherOptions(f.teacherId)}</select></div>
+        <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${f.busy ? 'disabled' : ''}>${f.busy ? '创建中…' : '创建班级'}</button></div>
+      </form>
+      <p class="field-hint">${d.teachers.some((t) => t.role === 'teacher') ? '任课教师能看到本班学生提交的作品并评分。' : '还没有教师账号：先在「师生账号」里添加角色为「教师」的账号，再回来指定任课教师。'}也可以在「师生账号」里用批量导入，按名单自动建班。</p>
+      ${f.error ? errorBlock(f.error) : ''}</div>
+    <div class="card"><div class="card__title"><h2>班级（${d.classes.length}）</h2><a class="btn btn--sm" href="#org/users" data-view="org/users">管理师生账号</a></div>
+      ${!d.classes.length ? '<div class="empty"><p class="empty__title">还没有班级</p><p>建好班级并把学生分进去，学生才能提交作品，教师才能批改。</p></div>'
+      : `<div class="table-scroll"><table class="table admin-table"><thead><tr><th scope="col">班级</th><th scope="col">任课教师</th><th scope="col">学生</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody>
+        ${d.classes.map((c) => `<tr><td><b>${esc(c.name)}</b></td>
+          <td><select class="input input--sm" data-class-teacher data-id="${c.id}" aria-label="${esc(c.name)} 的任课教师">${teacherOptions(c.teacherId)}</select></td>
+          <td>${c.studentCount} 人</td>
+          <td><div class="row-actions"><a class="btn btn--sm" href="#teach" data-view="teach" data-class-act="review" data-id="${c.id}">查看作品</a>
+            <button class="btn btn--sm" type="button" data-class-act="rename" data-id="${c.id}" data-name="${esc(c.name)}">改名</button>
+            <button class="btn btn--sm btn--danger" type="button" data-class-act="delete" data-id="${c.id}" data-name="${esc(c.name)}" data-count="${c.studentCount}">删除</button></div></td></tr>`).join('')}</tbody></table></div>`}
+      <p class="field-hint">删除班级不会删除学生账号（变为未分班），已提交的作品与成绩也会保留，学校管理员仍可在「作品批改」里查看和导出。</p></div>
+  </div>`;
+}
+
+/* ================= 视图：作品批改（教师 / 学校管理员） ================= */
+export function teachView(s) {
+  if (!isSchool(s)) return notSchool();
+  const T = s.adm.teach;
+  const d = T.data;
+  if (!d) return `<div class="console">${T.error ? errorBlock(T.error, { retry: 'adm-reload' }) : loadingBlock('正在读取作品…')}</div>`;
+  const st = d.stats;
+  const isAdmin = s.me.user.role === 'tenant_admin';
+  if (!d.classes.length) return `<div class="console"><div class="card"><div class="empty"><p class="empty__title">${isAdmin ? '还没有班级' : '你还没有任课班级'}</p>
+    <p>${isAdmin ? '先建好班级并把学生分进去，学生提交的作品就会出现在这里。' : '请联系学校管理员在「班级管理」里把你设为任课教师。'}</p>
+    ${isAdmin ? '<div class="empty__action"><a class="btn btn--primary btn--sm" href="#org/classes" data-view="org/classes">去建班</a></div>' : ''}</div></div></div>`;
+  const csv = api.teach.csvUrl({ class: T.classId, status: T.status });
+  return `<div class="console">
+    <div class="kpi-grid">
+      <div class="kpi"><span>已提交作品</span><b>${st.submitted}</b><small>${st.students} 名学生提交</small></div>
+      <div class="kpi"><span>待批改</span><b>${st.pending}</b><small>${st.pending ? '按提交时间排在前面' : '全部批改完了'}</small></div>
+      <div class="kpi"><span>已批改</span><b>${st.reviewed}</b><small>成绩已留档</small></div>
+      <div class="kpi"><span>平均分</span><b>${st.avgScore ?? '—'}</b><small>${st.reviewed ? `基于 ${st.reviewed} 条已批改作品` : '批改后显示'}</small></div>
+    </div>
+    <div class="toolbar">
+      <div class="form-field"><label class="sr-only" for="teach-class">班级</label><select class="input" id="teach-class" data-teach-filter="classId">
+        <option value="">${isAdmin ? '全部班级' : '我任课的全部班级'}</option>${d.classes.map((c) => `<option value="${c.id}" ${T.classId === c.id ? 'selected' : ''}>${esc(c.name)}（${c.studentCount} 人）</option>`).join('')}</select></div>
+      <div class="form-field"><label class="sr-only" for="teach-status">批改状态</label><select class="input" id="teach-status" data-teach-filter="status">
+        ${[['', '全部状态'], ['pending', '待批改'], ['reviewed', '已批改']].map(([v, l]) => `<option value="${v}" ${T.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <a class="btn" href="${esc(csv)}" download>导出成绩单（CSV）</a>
+    </div>
+    <div class="card">${T.error ? errorBlock(T.error, { retry: 'adm-reload' }) : ''}
+      ${!d.works.length ? `<div class="empty"><p class="empty__title">${T.status || T.classId ? '没有符合条件的作品' : '还没有学生提交作品'}</p><p>学生在工作台的「我的作品」里点「提交给老师」后，作品会出现在这里。</p></div>`
+      : `<div class="table-scroll"><table class="table admin-table teach-table"><thead><tr><th scope="col">学生</th><th scope="col">作品</th><th scope="col">提交时间</th><th scope="col">评分（0～100）</th><th scope="col">评语</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody>
+        ${d.works.map((w) => { const dr = T.drafts[w.id] || { score: '', comment: '' }; return `<tr>
+          <td><b>${esc(w.student.name || w.student.username)}</b><small class="cell-scene">${esc(w.student.username)} · ${esc(w.className)}</small></td>
+          <td>${esc(w.title)}<small class="cell-scene">${esc(w.type)} · ${w.mode === 'real' ? '真实环境' : '演示样例'}</small></td>
+          <td class="muted nowrap">${fmtTime(w.submittedAt)}${w.review ? `<small class="cell-scene">${esc(w.review.reviewer)} 已批改</small>` : ''}</td>
+          <td><input class="input input--sm teach-score" type="number" min="0" max="100" step="1" inputmode="numeric" data-bind="adm.teach.drafts.${w.id}.score" value="${esc(dr.score)}" aria-label="${esc(w.student.name || w.student.username)} 的评分" /></td>
+          <td><input class="input input--sm teach-comment" maxlength="500" data-bind="adm.teach.drafts.${w.id}.comment" value="${esc(dr.comment)}" placeholder="写给学生的评语（可选）" aria-label="${esc(w.student.name || w.student.username)} 的评语" /></td>
+          <td><div class="row-actions"><button class="btn btn--sm" type="button" data-teach-view="${w.id}">${w.kind === 'text' ? '查看' : '预览'}</button>
+            <button class="btn btn--sm btn--primary" type="button" data-teach-save="${w.id}" ${T.saving === w.id ? 'disabled' : ''}>${T.saving === w.id ? '保存中…' : w.review ? '改分' : '保存评分'}</button></div></td>
+        </tr>`; }).join('')}</tbody></table></div>`}
+      <p class="field-hint">这里只显示学生「已提交」的作品，学生没提交的草稿不会出现。评分保存后学生立刻能看到分数和评语，作品随之留档（学生不能再撤回或删除）。${isAdmin ? '' : '你只能看到自己任课班级的作品。'}</p></div>
   </div>`;
 }
 
@@ -360,7 +483,7 @@ export function tenantsView(s) {
         : `<div class="table-scroll"><table class="table admin-table"><thead><tr><th scope="col">客户</th><th scope="col">类型</th><th scope="col">有效期</th><th scope="col">状态</th><th scope="col">模块</th><th scope="col">成员</th><th scope="col">近 30 天调用</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody>
       ${shown.map((t) => `<tr>
         <td><a href="#admin/tenants/${t.id}" data-view="admin/tenants/${t.id}"><b>${esc(t.name)}</b></a>${t.contact ? `<small class="cell-scene">${esc(t.contact)}</small>` : ''}</td>
-        <td>${planLabel(t.plan)}${t.allowReal ? '<small class="cell-scene">已开通真实环境</small>' : ''}</td>
+        <td>${esc(orgTypeLabel(t.orgType))} · ${planLabel(t.plan)}${t.allowReal ? '<small class="cell-scene">已开通真实环境</small>' : ''}</td>
         <td class="nowrap">${esc(t.startsDay)}<small class="cell-scene">至 ${esc(t.expiresDay)}</small></td>
         <td>${tenantStatusPill(t)}</td>
         <td>${t.modules.length} / ${CAPABILITIES.length}</td>
@@ -382,6 +505,9 @@ export function tenantFormView(s) {
     <fieldset><legend>基本信息</legend><div class="form-grid">
       <div class="form-field"><label for="tf-name">客户名称</label><input class="input" id="tf-name" data-bind="adm.form.name" value="${esc(f.name)}" maxlength="60" /></div>
       <div class="form-field"><label for="tf-contact">联系人（可选）</label><input class="input" id="tf-contact" data-bind="adm.form.contact" value="${esc(f.contact)}" maxlength="60" placeholder="如：王经理 / 销售对接人" /></div>
+      <div class="form-field"><label for="tf-org">客户类别</label><select class="input" id="tf-org" data-bind="adm.form.orgType" data-live>
+        ${ORG_TYPES.map((o) => `<option value="${o.id}" ${f.orgType === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}</select>
+        <small class="field-hint">${esc(ORG_TYPES.find((o) => o.id === f.orgType)?.hint || '')}${f.orgType !== 'enterprise' ? '；院校客户会多出班级管理、教师角色与作品批改。' : ''}</small></div>
       <div class="form-field"><span class="label">客户类型</span><div class="seg" role="radiogroup" aria-label="客户类型">
         <label><input type="radio" name="tf-plan" value="trial" data-bind="adm.form.plan" ${f.plan === 'trial' ? 'checked' : ''} /> 体验客户</label>
         <label><input type="radio" name="tf-plan" value="formal" data-bind="adm.form.plan" ${f.plan === 'formal' ? 'checked' : ''} /> 正式客户</label></div></div>
@@ -431,6 +557,7 @@ export function tenantDetailView(s) {
     <div class="grid-2">
       <div class="card"><div class="card__title"><h2>${esc(t.name)}</h2>${tenantStatusPill(t)}</div>
         <table class="table kv-table"><tbody>
+          <tr><th scope="row">类别</th><td>${esc(orgTypeLabel(t.orgType))}${t.isSchool ? ` · ${d.classes?.length || 0} 个班级` : ''}</td></tr>
           <tr><th scope="row">类型</th><td>${planLabel(t.plan)}客户</td></tr>
           <tr><th scope="row">有效期</th><td>${esc(t.startsDay)} 至 ${esc(t.expiresDay)}</td></tr>
           <tr><th scope="row">联系人</th><td>${esc(t.contact || '—')}</td></tr>
@@ -461,8 +588,10 @@ export function tenantDetailView(s) {
     <div class="card"><div class="card__title"><h2>API 密钥</h2></div>${keysTable(d.keys, 'admin')}
       <h3 class="doc-h">为客户签发</h3>${keyCreateForm(s, `admin:${t.id}`)}
       <p class="field-hint">客户用密钥调用开放接口（${esc(location.origin + location.pathname.replace(/[^/]*$/, ''))}open/v1），平台再用厂商 Token 转发；客户管理员也可以在「API 接入」里自助签发和吊销。</p></div>
-    <div class="card"><div class="card__title"><h2>添加账号</h2></div>${userCreateForm(s, `admin:${t.id}`, t.userCount >= t.maxUsers)}</div>
-    <div class="card"><div class="card__title"><h2>账号</h2></div>${usersTable(d.users, { selfId: s.me.user.id, scope: 'admin' })}</div>
+    <div class="card"><div class="card__title"><h2>添加账号</h2></div>${userCreateForm(s, `admin:${t.id}`, t.userCount >= t.maxUsers, { school: t.isSchool, classes: d.classes || [] })}</div>
+    <div class="card"><div class="card__title"><h2>批量导入</h2></div>${importForm(s, `admin:${t.id}`, { school: t.isSchool })}</div>
+    <div class="card"><div class="card__title"><h2>账号</h2></div>${usersTable(d.users, { selfId: s.me.user.id, scope: 'admin', school: t.isSchool, classes: d.classes || [] })}
+      ${t.isSchool ? '<p class="field-hint">班级由学校管理员在「班级管理」里创建和指定任课教师；这里可以代为调整账号的角色与班级。</p>' : ''}</div>
   </div>`;
 }
 
@@ -520,12 +649,16 @@ export function adminLogsView(s) { return `<div class="console">${logsPanel(s, '
 /* ================= 控制逻辑 ================= */
 const emptyLogFilters = () => ({ tenant: '', user: '', category: '', capability: '', ok: '', from: addDays(todayStr(), -6), to: todayStr(), page: 1 });
 const emptyVendorForm = () => ({ id: null, name: '', baseUrl: 'https://aigc.softsugar.com', appId: '', appKey: '', ttsQid: '', avatarImageUrl: '', note: '', busy: false, error: null });
-const emptyUserForm = () => ({ username: '', displayName: '', role: 'member', busy: false, error: null });
+const emptyUserForm = () => ({ username: '', displayName: '', role: 'member', classId: '', busy: false, error: null });
+const emptyImportForm = () => ({ text: '', prefix: '', role: 'member', busy: false, error: null });
+const emptyClassForm = () => ({ name: '', teacherId: '', busy: false, error: null });
+const emptyTeach = () => ({ data: null, error: null, classId: '', status: '', drafts: {}, saving: null });
 
 export function initialAdminState() {
   return {
     error: null, overview: null, tenants: null, tenant: null, form: null, vendors: null, vendorTokens: {}, orgOverview: null, orgUsers: null,
-    tenantFilter: { q: '', status: '' }, vendorForm: emptyVendorForm(), userForm: emptyUserForm(),
+    tenantFilter: { q: '', status: '' }, vendorForm: emptyVendorForm(), userForm: emptyUserForm(), importForm: emptyImportForm(),
+    orgClasses: null, classForm: emptyClassForm(), teach: emptyTeach(),
     keyForm: { name: '', expiresDay: '', busy: false, error: null }, quotaForm: { op: 'allocate', meter: 'video_seconds', amount: '', note: '', busy: false, error: null },
     purchaseForm: { vendorId: '', meter: 'video_seconds', amount: '', note: '', busy: false, error: null }, orgKeys: null, orgLedger: null, logs: { filters: emptyLogFilters(), data: null, error: null, loading: false },
   };
@@ -535,8 +668,10 @@ export function initialAdminState() {
 export const ADMIN_ROUTES = {
   login: { title: '登录', render: loginView, public: true },
   account: { title: '账号与密码', render: accountView },
-  org: { role: 'tenant_admin', title: '企业概览', render: orgOverviewView },
-  'org/users': { role: 'tenant_admin', title: '成员管理', render: orgUsersView },
+  teach: { roles: ['teacher', 'tenant_admin'], title: '作品批改', render: teachView },
+  org: { role: 'tenant_admin', title: '企业概览', schoolTitle: '学校概览', render: orgOverviewView },
+  'org/classes': { role: 'tenant_admin', title: '班级管理', render: orgClassesView },
+  'org/users': { role: 'tenant_admin', title: '成员管理', schoolTitle: '师生账号', render: orgUsersView },
   'org/logs': { role: 'tenant_admin', title: '使用日志', render: orgLogsView },
   'org/api': { role: 'tenant_admin', title: 'API 接入', render: orgApiView },
   admin: { role: 'super_admin', title: '运营总览', render: adminOverviewView },
@@ -552,13 +687,13 @@ export function renderAdminRoute(s) {
   const r = ADMIN_ROUTES[s.view];
   if (r.public) return r.render(s);
   if (!s.me?.user) return loginRequired();
-  if (r.role && s.me.user.role !== r.role) return forbidden();
+  if ((r.role && s.me.user.role !== r.role) || (r.roles && !r.roles.includes(s.me.user.role))) return forbidden();
   return r.render(s);
 }
 
 /** 把 hash 解析为后台路由；返回 null 表示不是后台页面 */
 export function parseAdminHash(h) {
-  if (h === 'login' || h === 'account' || h === 'org' || h === 'org/users' || h === 'org/logs' || h === 'org/api' || h === 'admin' || h === 'admin/tenants' || h === 'admin/vendors' || h === 'admin/logs') return { view: h };
+  if (h === 'login' || h === 'account' || h === 'teach' || h === 'org/classes' || h === 'org' || h === 'org/users' || h === 'org/logs' || h === 'org/api' || h === 'admin' || h === 'admin/tenants' || h === 'admin/vendors' || h === 'admin/logs') return { view: h };
   if (h === 'admin/tenants/new') return { view: 'admin/tenant-new' };
   let m = h.match(/^admin\/tenants\/([\w-]+)\/edit$/); if (m) return { view: 'admin/tenant-edit', id: m[1] };
   m = h.match(/^admin\/tenants\/([\w-]+)$/); if (m) return { view: 'admin/tenant', id: m[1] };
@@ -576,7 +711,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
   };
 
   function tenantToForm(t) {
-    return { id: t.id, name: t.name, contact: t.contact || '', plan: t.plan, startsDay: t.startsDay, expiresDay: t.expiresDay, maxUsers: String(t.maxUsers), status: t.status,
+    return { id: t.id, name: t.name, contact: t.contact || '', orgType: t.orgType || 'enterprise', plan: t.plan, startsDay: t.startsDay, expiresDay: t.expiresDay, maxUsers: String(t.maxUsers), status: t.status,
       modules: [...t.modules], allowReal: t.allowReal, allowBillable: t.allowBillable, vendorId: t.vendorId || '', note: t.note || '', busy: false, error: null };
   }
 
@@ -590,6 +725,24 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     L.loading = false; render();
   }
 
+  /** 读取批改列表；每条作品准备一份评分草稿（已批改的预填原分数与评语） */
+  async function loadTeach() {
+    const T = A().teach; T.error = null;
+    try {
+      const d = await api.teach.works({ class: T.classId, status: T.status });
+      const drafts = {};
+      for (const w of d.works) {
+        const base = { score: w.review ? String(w.review.score) : '', comment: w.review?.comment || '' };
+        const old = T.drafts[w.id];
+        // 老师已经填了但还没保存的评分不能被刷新冲掉（例如保存了第一行，其余几行还在填）
+        const typed = old && (String(old.score) !== old.baseScore || old.comment !== old.baseComment);
+        drafts[w.id] = typed ? old : { ...base, baseScore: base.score, baseComment: base.comment };
+      }
+      T.data = d; T.drafts = drafts;
+    } catch (e) { T.error = toApiError(e); if (T.error.code === 'FORBIDDEN' && T.classId) { T.classId = ''; return loadTeach(); } }
+    render();
+  }
+
   /** 进入后台页面时加载数据 */
   function enter(route) {
     const v = route.view;
@@ -597,7 +750,9 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     if (v === 'account') { state.pw = { old: '', next: '', again: '', busy: false, error: null }; return; }
     if (!state.me?.user) return;
     if (v === 'org') { A().orgOverview = null; loadInto('orgOverview', api.org.overview); }
-    if (v === 'org/users') { A().orgUsers = null; A().userForm = emptyUserForm(); loadInto('orgUsers', api.org.users); }
+    if (v === 'org/users') { A().orgUsers = null; A().userForm = emptyUserForm(); A().importForm = emptyImportForm(); loadInto('orgUsers', api.org.users); }
+    if (v === 'org/classes' && state.me.teaching?.isSchool) { A().orgClasses = null; A().classForm = emptyClassForm(); loadInto('orgClasses', api.org.classes); }
+    if (v === 'teach' && state.me.teaching?.isSchool) { const keep = A().teach; A().teach = { ...emptyTeach(), classId: keep.classId, status: keep.status }; loadTeach(); }
     if (v === 'org/logs') { A().logs.filters.page = 1; if (!A().orgUsers) api.org.users().then((d) => { A().orgUsers = d; render(); }, () => {}); loadLogs('org'); }
     if (v === 'org/api') {
       A().orgKeys = null; A().orgLedger = null; A().keyForm = { name: '', expiresDay: '', busy: false, error: null };
@@ -608,7 +763,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     if (v === 'admin/tenants') { loadInto('tenants', async () => (await api.admin.tenants()).tenants); }
     if (v === 'admin/tenant-new') {
       const start = todayStr();
-      A().form = { id: null, name: '', contact: '', plan: 'trial', startsDay: start, expiresDay: addDays(start, 13), maxUsers: '10', status: 'active', modules: ['video-image', 'voice-tts', 'nlp-chat'], allowReal: false, allowBillable: false, vendorId: '', note: '', adminUsername: '', adminDisplayName: '', busy: false, error: null };
+      A().form = { id: null, name: '', contact: '', orgType: 'enterprise', plan: 'trial', startsDay: start, expiresDay: addDays(start, 13), maxUsers: '10', status: 'active', modules: ['video-image', 'voice-tts', 'nlp-chat'], allowReal: false, allowBillable: false, vendorId: '', note: '', adminUsername: '', adminDisplayName: '', busy: false, error: null };
       loadInto('vendors', api.admin.vendors);
     }
     if (v === 'admin/tenant-edit') {
@@ -616,7 +771,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
       loadInto('vendors', api.admin.vendors);
       api.admin.tenant(route.id).then((d) => { A().form = tenantToForm(d.tenant); render(); }, (e) => { A().error = toApiError(e); render(); });
     }
-    if (v === 'admin/tenant') { A().tenant = null; A().userForm = emptyUserForm(); A().keyForm = { name: '', expiresDay: '', busy: false, error: null }; A().quotaForm = { op: 'allocate', meter: 'video_seconds', amount: '', note: '', busy: false, error: null }; loadInto('tenant', () => api.admin.tenant(route.id)); }
+    if (v === 'admin/tenant') { A().tenant = null; A().userForm = emptyUserForm(); A().importForm = emptyImportForm(); A().keyForm = { name: '', expiresDay: '', busy: false, error: null }; A().quotaForm = { op: 'allocate', meter: 'video_seconds', amount: '', note: '', busy: false, error: null }; loadInto('tenant', () => api.admin.tenant(route.id)); }
     if (v === 'admin/vendors') {
       A().vendorForm = emptyVendorForm();
       loadInto('vendors', async () => { const d = await api.admin.vendors(); if (!d.vendors.some((x) => x.id === A().purchaseForm.vendorId)) A().purchaseForm.vendorId = d.vendors[0]?.id || ''; return d; });
@@ -639,7 +794,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
       await refreshMe(state.me);
       const u = state.me.user;
       toast(`欢迎，${u.displayName || u.username}`);
-      go(u.mustChangePassword ? 'account' : u.role === 'super_admin' ? 'admin' : u.role === 'tenant_admin' ? 'org' : 'create');
+      go(u.mustChangePassword ? 'account' : u.role === 'super_admin' ? 'admin' : u.role === 'tenant_admin' ? 'org' : u.role === 'teacher' && state.me.teaching?.isSchool ? 'teach' : 'create');
     } catch (e) { f.busy = false; f.error = toApiError(e); render(); document.getElementById('login-pass')?.focus(); }
   }
 
@@ -653,13 +808,13 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
       await refreshMe(state.me);
       toast('密码已更新');
       const u = state.me.user;
-      go(u.role === 'super_admin' ? 'admin' : u.role === 'tenant_admin' ? 'org' : 'create');
+      go(u.role === 'super_admin' ? 'admin' : u.role === 'tenant_admin' ? 'org' : u.role === 'teacher' && state.me.teaching?.isSchool ? 'teach' : 'create');
     } catch (e) { f.busy = false; f.error = toApiError(e); render(); }
   }
 
   async function submitTenant() {
     const f = A().form;
-    const body = { name: f.name, contact: f.contact, plan: f.plan, startsDay: f.startsDay, expiresDay: f.expiresDay, maxUsers: Number(f.maxUsers), modules: f.modules, allowReal: !!f.allowReal, allowBillable: !!f.allowBillable, vendorId: f.vendorId || null, note: f.note };
+    const body = { name: f.name, contact: f.contact, orgType: f.orgType || 'enterprise', plan: f.plan, startsDay: f.startsDay, expiresDay: f.expiresDay, maxUsers: Number(f.maxUsers), modules: f.modules, allowReal: !!f.allowReal, allowBillable: !!f.allowBillable, vendorId: f.vendorId || null, note: f.note };
     if (f.id) body.status = f.status;
     else body.admin = { username: f.adminUsername.trim(), displayName: f.adminDisplayName.trim() };
     f.busy = true; f.error = null; render();
@@ -679,6 +834,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     const f = A().userForm;
     f.busy = true; f.error = null; render();
     const body = { username: f.username.trim(), displayName: f.displayName.trim(), role: f.role };
+    if (f.classId && f.role === 'member') body.classId = f.classId;
     try {
       const tenantId = scope.startsWith('admin:') ? scope.slice(6) : null;
       const r = tenantId ? await api.admin.createUser(tenantId, body) : await api.org.createUser(body);
@@ -692,7 +848,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
   async function userAction(el) {
     const { userAct: act, id, scope, name } = el.dataset;
     const ns = scope === 'admin' ? api.admin : api.org;
-    const confirmText = { reset: `重置 ${name} 的密码？对方会立即下线，需要用新的初始密码登录。`, disable: `停用 ${name}？对方会立即下线且无法登录。`, delete: `删除账号 ${name}？此操作不可恢复（历史日志会保留）。`, promote: `把 ${name} 设为企业管理员？`, demote: `把 ${name} 改为普通成员？` }[act];
+    const confirmText = { reset: `重置 ${name} 的密码？对方会立即下线，需要用新的初始密码登录。`, disable: `停用 ${name}？对方会立即下线且无法登录。`, delete: `删除账号 ${name}？此操作不可恢复（历史日志会保留）。`, promote: `把 ${name} 设为管理员？`, demote: `把 ${name} 改为普通成员？` }[act];
     if (confirmText && !window.confirm(confirmText)) return;
     try {
       if (act === 'reset') { const r = await ns.resetPassword(id); state.dialog = { type: 'cred', title: `已重置 ${r.username} 的密码`, username: r.username, password: r.initialPassword }; }
@@ -701,6 +857,94 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
       if (scope === 'admin') A().tenant = await api.admin.tenant(A().tenant.tenant.id); else A().orgUsers = await api.org.users();
     } catch (e) { const err = toApiError(e); toast(err.message + (err.hint ? ` ${err.hint}` : '')); }
     render();
+  }
+
+  const reloadUsers = async (scope) => { if (scope.startsWith('admin')) A().tenant = await api.admin.tenant(A().tenant.tenant.id); else A().orgUsers = await api.org.users(); };
+
+  async function submitImport(scope) {
+    const f = A().importForm;
+    const rows = parseRoster(f.text);
+    f.busy = true; f.error = null; render();
+    const body = { prefix: f.prefix.trim(), role: f.role, rows };
+    try {
+      const tenantId = scope.startsWith('admin:') ? scope.slice(6) : null;
+      const r = tenantId ? await api.admin.importUsers(tenantId, body) : await api.org.importUsers(body);
+      A().importForm = emptyImportForm();
+      state.dialog = { type: 'cred', title: `已导入 ${r.created.length} 个账号`, list: r.created, classesCreated: r.classesCreated };
+      await reloadUsers(scope);
+      render();
+    } catch (e) { f.busy = false; f.error = toApiError(e); render(); }
+  }
+
+  async function submitClass() {
+    const f = A().classForm;
+    f.busy = true; f.error = null; render();
+    try {
+      await api.org.createClass({ name: f.name.trim(), teacherId: f.teacherId || null });
+      A().classForm = emptyClassForm();
+      A().orgClasses = await api.org.classes();
+      toast('已创建班级');
+    } catch (e) { f.busy = false; f.error = toApiError(e); }
+    render();
+  }
+
+  async function classAction(el) {
+    const { classAct: act, id, name } = el.dataset;
+    if (act === 'review') { A().teach.classId = id; A().teach.status = ''; return; } // 跳转由链接完成
+    try {
+      if (act === 'rename') {
+        const next = window.prompt('班级新名称', name);
+        if (next === null || next.trim() === name) return;
+        await api.org.updateClass(id, { name: next.trim() }); toast('已改名');
+      } else if (act === 'delete') {
+        if (!window.confirm(`删除班级「${name}」？${Number(el.dataset.count) ? `班里的 ${el.dataset.count} 名学生会变为未分班；` : ''}已提交的作品与成绩会保留。`)) return;
+        await api.org.deleteClass(id); toast('已删除班级');
+      }
+      A().orgClasses = await api.org.classes();
+    } catch (e) { const err = toApiError(e); toast(err.message + (err.hint ? ` ${err.hint}` : '')); }
+    render();
+  }
+
+  async function saveReview(id) {
+    const T = A().teach; const dr = T.drafts[id]; if (!dr) return;
+    const score = String(dr.score).trim();
+    if (!/^\d{1,3}$/.test(score) || Number(score) > 100) return toast('评分需为 0～100 的整数');
+    T.saving = id; render();
+    try {
+      await api.teach.review(id, { score: Number(score), comment: dr.comment });
+      delete T.drafts[id];
+      toast('已保存评分，学生现在可以看到');
+      T.saving = null;
+      await loadTeach();
+    } catch (e) { T.saving = null; const err = toApiError(e); toast(err.message + (err.hint ? ` ${err.hint}` : '')); render(); }
+  }
+
+  /** select 等控件的 change 事件：角色、班级、任课教师、批改筛选 */
+  function change(el) {
+    const d = el.dataset || {};
+    const run = async (fn, okText, reload) => {
+      try { await fn(); if (okText) toast(okText); } catch (e) { const err = toApiError(e); toast(err.message + (err.hint ? ` ${err.hint}` : '')); }
+      try { await reload(); } catch { /* 忽略 */ }
+      render();
+    };
+    if (d.userRole !== undefined) {
+      const ns = d.scope === 'admin' ? api.admin : api.org;
+      const label = el.options[el.selectedIndex]?.textContent || el.value;
+      if (!window.confirm(`把 ${d.name} 设为「${label}」？${d.current === 'teacher' ? '对方将不再是任何班级的任课教师。' : ''}`)) { el.value = d.current; return true; }
+      run(() => ns.updateUser(d.id, el.value === 'member' ? { role: el.value } : { role: el.value, classId: null }), '已更新', () => reloadUsers(d.scope));
+      return true;
+    }
+    if (d.userClass !== undefined) {
+      const ns = d.scope === 'admin' ? api.admin : api.org;
+      run(() => ns.updateUser(d.id, { classId: el.value || null }), el.value ? '已调整班级' : '已移出班级', () => reloadUsers(d.scope));
+      return true;
+    }
+    if (d.classTeacher !== undefined) {
+      run(() => api.org.updateClass(d.id, { teacherId: el.value || null }), '已更新任课教师', async () => { A().orgClasses = await api.org.classes(); });
+      return true;
+    }
+    if (d.teachFilter) { A().teach[d.teachFilter] = el.value; loadTeach(); return true; }
+    return false;
   }
 
   async function submitVendor() {
@@ -742,6 +986,17 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
       const d = state.dialog;
       const text = d.secret ? d.secret : `登录地址：${location.origin + location.pathname}#login\n用户名：${d.username}\n初始密码：${d.password}\n（首次登录需修改密码）`;
       (navigator.clipboard?.writeText(text) || Promise.reject()).then(() => toast('已复制'), () => toast('复制失败，请手动记录'));
+    },
+    'cred-download': () => {
+      const d = state.dialog; if (!d?.list) return;
+      const cell = (v) => { let t = String(v ?? ''); if (/^[=+\-@]/.test(t)) t = `'${t}`; return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+      const lines = [['用户名', '姓名', '班级', '初始密码', '登录地址'].join(','), ...d.list.map((u) => [u.username, u.displayName, u.className, u.initialPassword, `${location.origin + location.pathname}#login`].map(cell).join(','))];
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+      a.download = `账号清单-${todayStr()}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast('已下载，请妥善保管并分发给本人');
     },
     'adm-reload': () => enter(state.route),
     'logs-reload': () => loadLogs(state.view === 'admin/logs' ? 'admin' : 'org'),
@@ -809,6 +1064,8 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     'key-create': submitKey, quota: submitQuota, purchase: submitPurchase,
     login: submitLogin, 'change-pw': submitPassword, tenant: submitTenant, vendor: submitVendor,
     'user-create': (el) => submitUser(el.dataset.scope),
+    'user-import': (el) => submitImport(el.dataset.scope),
+    'class-create': submitClass,
     logs: () => { A().logs.filters.page = 1; loadLogs(state.view === 'admin/logs' ? 'admin' : 'org'); },
   };
 
@@ -822,10 +1079,13 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     if (d.quickDays && f) { f.expiresDay = addDays(f.startsDay || todayStr(), Number(d.quickDays) - 1); if (Number(d.quickDays) >= 30) f.plan = Number(d.quickDays) >= 365 ? 'formal' : f.plan; render(); return true; }
     if (d.quickExtend && f) { const base = f.expiresDay < todayStr() ? todayStr() : f.expiresDay; f.expiresDay = addDays(base, Number(d.quickExtend)); render(); return true; }
     if (d.userAct) { userAction(el); return true; }
+    if (d.classAct) { classAction(el); return d.classAct !== 'review'; }
+    if (d.teachSave) { saveReview(d.teachSave); return true; }
+    if (d.teachView) { const w = A().teach.data?.works.find((x) => x.id === d.teachView); if (w) { state.dialog = { type: 'work', work: w }; render(); } return true; }
     if (d.keyRevoke) { revokeKey(el); return true; }
     if (d.vendorAct) { vendorAction(el); return true; }
     return false;
   }
 
-  return { enter, actions, forms, click, loadLogs };
+  return { enter, actions, forms, click, change, loadLogs };
 }

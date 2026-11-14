@@ -81,3 +81,28 @@ test('版本号只在 package.json 定义，源码里没有手写版本号', asy
     assert.ok(!src.includes(`'${pkg.version}'`), `${f} 里不应写死版本号`);
   }
 });
+
+test('导航按角色与客户类别：院校多出教学与班级管理，企业保持不变', async () => {
+  const { navFor, roleLabel, ORG_TYPES } = await import('../src/lib/product.js');
+  const ids = (role, isSchool) => navFor(role, { isSchool }).flatMap((s) => s.items.map((i) => i.id));
+  assert.ok(!ids('tenant_admin', false).includes('teach'), '企业管理员没有批改入口');
+  assert.ok(!ids('tenant_admin', false).includes('org/classes'));
+  assert.ok(ids('teacher', true).includes('teach'));
+  assert.ok(!ids('teacher', true).includes('org/users'), '教师不能管理账号');
+  assert.ok(ids('tenant_admin', true).includes('org/classes') && ids('tenant_admin', true).includes('teach'));
+  assert.ok(!ids('member', true).includes('teach'), '学生没有批改入口');
+  for (const id of new Set([...ids('tenant_admin', true), ...ids('super_admin', false)])) assert.ok(navById(id), `${id} 应能被路由识别`);
+  assert.equal(roleLabel('member', true), '学生'); assert.equal(roleLabel('member', false), '成员');
+  assert.deepEqual(ORG_TYPES.map((t) => t.id), ['enterprise', 'vocational', 'applied', 'university']);
+});
+
+test('批量导入名单解析：逗号 / 中文逗号 / 制表符，跳过表头与空行', async () => {
+  const { parseRoster } = await import('../src/lib/admin.js');
+  const rows = parseRoster('学号,姓名,班级\n20260101, 张三 , 数媒1班\n\n20260102\t李四\t数媒1班\nwang_lei，王磊\n');
+  assert.deepEqual(rows, [
+    { username: '20260101', displayName: '张三', className: '数媒1班' },
+    { username: '20260102', displayName: '李四', className: '数媒1班' },
+    { username: 'wang_lei', displayName: '王磊', className: '' },
+  ]);
+  assert.deepEqual(parseRoster('  \n'), []);
+});

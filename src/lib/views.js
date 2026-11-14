@@ -1,6 +1,6 @@
 // views.js —— 视图渲染（纯函数：state → HTML）
 // 外壳（顶栏/页脚，含双 logo）只在启动时渲染一次；这里的函数只负责动态内容区与覆盖层。
-import { PRODUCT, BRAND_LOGOS, MODE_NOTICE, navFor, SHORTCUT_MODULE, ROLE_LABEL } from './product.js';
+import { PRODUCT, BRAND_LOGOS, MODE_NOTICE, navFor, SHORTCUT_MODULE, roleLabel } from './product.js';
 import { GROUPS, CAPABILITIES, SCENARIOS, INTEGRATION_STEPS, capsOf, stats, capById, groupOf, OUTPUT_LABEL } from './capabilities.js';
 import { INTERPRET, TOUR_STEPS } from './guide.js';
 import { EXPERIENCES, estimateSeconds } from './wizard.js';
@@ -36,10 +36,11 @@ export function topbarHtml() {
 export function userSlotHtml(me) {
   const u = me?.user;
   if (!u) return '<a class="btn btn--ghost topbar__login" href="#login" data-view="login">登录</a>';
+  const school = !!me.teaching?.isSchool;
   const home = u.role === 'super_admin' ? 'admin' : u.role === 'tenant_admin' ? 'org' : 'account';
-  return `<a class="user-chip" href="#${home}" data-view="${home}" title="${esc(ROLE_LABEL[u.role])}">
+  return `<a class="user-chip" href="#${home}" data-view="${home}" title="${esc(roleLabel(u.role, school))}">
       <span class="user-chip__avatar" aria-hidden="true">${esc((u.displayName || u.username).slice(0, 1).toUpperCase())}</span>
-      <span class="user-chip__text"><b>${esc(u.displayName || u.username)}</b><small>${esc(me.tenant?.name || ROLE_LABEL[u.role])}</small></span></a>`;
+      <span class="user-chip__text"><b>${esc(u.displayName || u.username)}</b><small>${esc(me.tenant?.name || roleLabel(u.role, school))}</small></span></a>`;
 }
 
 /** 当前用户可用的模块（访客为全部演示模块） */
@@ -244,7 +245,7 @@ export function integrationView() {
 /* ============ 内容区：工作台 ============ */
 export function sidenav(s) {
   const active = s.view.startsWith('admin/tenant') ? 'admin/tenants' : s.view === 'experience' ? 'catalog' : s.view;
-  return `<nav class="sidenav" aria-label="工作台">${navFor(s.me?.user?.role).map((sec) => `
+  return `<nav class="sidenav" aria-label="工作台">${navFor(s.me?.user?.role, { isSchool: !!s.me?.teaching?.isSchool }).map((sec) => `
     <div class="nav-group"><div class="nav-group__label" aria-hidden="true">${sec.label}</div>
       ${sec.items.map((it) => `<a class="nav-item ${active === it.id ? 'is-active' : ''}" href="#${it.id}" data-view="${it.id}" ${active === it.id ? 'aria-current="page"' : ''}>
         <span class="nav-item__icon" aria-hidden="true">${it.icon}</span><span>${it.label}</span>
@@ -268,8 +269,8 @@ export function overviewView(s) {
   return `<div class="console">
     <div class="kpi-grid">
       <div class="kpi"><span>可用能力</span><b>${allowedModules(s).length}</b><small>共 ${CAPABILITIES.length} 项平台能力</small></div>
-      <div class="kpi"><span>我的作品</span><b>${s.works.length}</b><small>保存在本机 · 7 天有效</small></div>
-      <div class="kpi"><span>知识库资料</span><b>${kbCount}</b><small>仅你自己可见</small></div>
+      <div class="kpi"><span>我的作品</span><b>${s.works.length}</b><small>${s.me?.user ? '保存在账号里 · 换电脑不丢' : '保存在本机 · 7 天有效'}</small></div>
+      <div class="kpi"><span>知识库资料</span><b>${kbCount}</b><small>${s.me?.access?.kind === 'tenant' ? `本${s.me?.teaching?.isSchool ? '校' : '企业'}成员共享` : '仅你自己可见'}</small></div>
       <div class="kpi"><span>运行环境</span><b class="kpi__mode">${isReal(s) ? '真实' : '演示'}</b><small><a href="#settings" data-view="settings">切换环境</a></small></div>
     </div>
     <div class="grid-2">
@@ -331,11 +332,23 @@ function workOpen(w) {
   return `<button class="btn btn--sm" type="button" data-work-view="${w.id}">预览</button>`;
 }
 
-function worksTable(list, { withDelete = false } = {}) {
+/** 作品的教学状态：未提交 / 已提交待批改 / 已批改（含分数） */
+function workStatusPill(w) {
+  if (w.review) return `<span class="pill pill--ok">已批改 · ${w.review.score} 分</span>`;
+  if (w.submittedAt) return '<span class="pill pill--info">已提交 · 待批改</span>';
+  return '';
+}
+
+function worksTable(list, { withDelete = false, canSubmit = false } = {}) {
   return `<ul class="work-list">${list.map((w) => `<li class="work-item">
-      <div class="work-item__main"><b>${esc(w.title)}</b>
-        <span class="work-item__meta">${esc(w.type)} · ${w.mode === 'real' ? '真实环境' : '演示样例'} · ${esc(w.createdAt)} · 剩余 ${w.days} 天</span></div>
-      <div class="work-item__actions">${workOpen(w)}${withDelete ? `<button class="btn btn--sm" type="button" data-rename="${w.id}" aria-label="给作品改名：${esc(w.title)}">改名</button><button class="btn btn--sm" type="button" data-del="${w.id}" aria-label="删除作品：${esc(w.title)}">删除</button>` : ''}</div>
+      <div class="work-item__main"><span class="work-item__title"><b>${esc(w.title)}</b>${workStatusPill(w)}</span>
+        <span class="work-item__meta">${esc(w.type)} · ${w.mode === 'real' ? '真实环境' : '演示样例'} · ${esc(w.createdAt)}${w.remote ? '' : ` · 剩余 ${w.days} 天`}</span>
+        ${w.review?.comment ? `<span class="work-item__comment">评语：${esc(w.review.comment)}</span>` : ''}</div>
+      <div class="work-item__actions">${workOpen(w)}${withDelete ? `${
+        canSubmit && w.remote && !w.submittedAt ? `<button class="btn btn--sm btn--primary" type="button" data-action="work-submit" data-id="${w.id}" aria-label="提交给老师：${esc(w.title)}">提交给老师</button>` : ''}${
+        w.submittedAt && !w.review ? `<button class="btn btn--sm" type="button" data-action="work-withdraw" data-id="${w.id}" aria-label="撤回提交：${esc(w.title)}">撤回</button>` : ''
+      }<button class="btn btn--sm" type="button" data-rename="${w.id}" aria-label="给作品改名：${esc(w.title)}">改名</button>${
+        w.review ? '' : `<button class="btn btn--sm" type="button" data-del="${w.id}" aria-label="删除作品：${esc(w.title)}">删除</button>`}` : ''}</div>
     </li>`).join('')}</ul>`;
 }
 
@@ -453,10 +466,22 @@ function kbPanel(s) {
 
 export function tasksView(s) {
   const ws = s.works;
-  return `<div class="console"><div class="card"><div class="card__title"><h2>我的作品</h2>
+  const signedIn = !!s.me?.user;
+  const t = s.me?.teaching || {};
+  const student = t.isSchool && s.me?.user?.role === 'member';
+  const classNote = !student ? '' : t.canSubmit
+    ? `<div class="alert alert--info" role="note"><div class="alert__body"><b>你在 ${esc(s.me.user.className)}</b><p>完成实训后，在作品右侧点「提交给老师」。老师批改前可以撤回；批改后这里会显示分数和评语，作品会留档、不能删除。</p></div></div>`
+    : '<div class="alert alert--warn" role="note"><div class="alert__body"><b>你还没有被分到班级</b><p>作品可以正常保存，但暂时不能提交。请联系任课教师或学校管理员把你加入班级。</p></div></div>';
+  const importNote = signedIn && s.localWorkCount ? `<div class="alert alert--info" role="note"><div class="alert__body"><b>这台电脑上还有 ${s.localWorkCount} 条未登录时保存的作品</b><p>它们只存在这台电脑的浏览器里，7 天后会自动清除。如果是你的作品，可以导入到账号里长期保存。</p></div>
+      <button class="btn btn--sm" type="button" data-action="works-import-local">导入到我的账号</button></div>` : '';
+  return `<div class="console">${classNote}${importNote}
+    ${s.worksError ? errorBlock(s.worksError, { retry: 'works-reload' }) : ''}
+    <div class="card"><div class="card__title"><h2>我的作品</h2>
       ${ws.length ? `<button class="btn btn--sm" type="button" data-action="works-clear">全部清空</button>` : ''}</div>
-    ${ws.length ? worksTable(ws, { withDelete: true }) : emptyState('还没有保存的作品', '在创作中心或能力体验里生成结果后，点「保存到作品」即可在这里找回。', '<a class="btn btn--primary btn--sm" href="#create" data-view="create">去创作中心</a>')}
-    <p class="hint-block">作品记录保存在本机浏览器，7 天后自动清除，最多保留 30 条；清除浏览器数据会一并删除。真实环境的文件链接有效期以如影平台为准。</p></div></div>`;
+    ${ws.length ? worksTable(ws, { withDelete: true, canSubmit: !!t.canSubmit }) : emptyState('还没有保存的作品', '在创作中心或能力体验里生成结果后，点「保存到作品」即可在这里找回。', '<a class="btn btn--primary btn--sm" href="#create" data-view="create">去创作中心</a>')}
+    <p class="hint-block">${signedIn
+      ? '作品保存在你的账号里，换一台电脑登录也能找回，最多保留 500 条。这里保存的是作品记录与文件链接，文件本身仍在如影平台，真实环境的文件链接有效期以如影平台为准，重要作品请及时下载留存。'
+      : '你还没有登录：作品记录保存在本机浏览器，7 天后自动清除，最多保留 30 条；清除浏览器数据会一并删除。<a href="#login" data-view="login">登录</a>后保存的作品会进入账号，换电脑也不丢。'}</p></div></div>`;
 }
 
 export function catalogView(s) {
@@ -547,10 +572,12 @@ export function workDialog(w) {
   else if (w.kind === 'image' && w.url) body = `<img src="${esc(w.url)}" alt="${esc(w.title)}" class="media-image">`;
   else body = `<pre class="json-block">${esc(w.text)}</pre>`;
   const links = w.url ? `${(w.kind === 'video' || w.kind === 'audio') ? `<a class="btn" href="${esc(w.url)}" download>下载</a>` : ''}<a class="btn" href="${esc(w.url)}" target="_blank" rel="noreferrer">在新窗口打开</a>` : '';
+  const who = w.student ? `<p class="muted">${esc(w.className || '')} · ${esc(w.student.name || w.student.username)}（${esc(w.student.username)}）</p>` : '';
+  const review = w.review ? `<div class="review-box"><b>评分 ${w.review.score} 分</b>${w.review.reviewer ? `<small> · ${esc(w.review.reviewer)}</small>` : ''}${w.review.comment ? `<p>${esc(w.review.comment)}</p>` : ''}</div>` : '';
   return `<div class="sheet-mask" data-action="close-dialog"></div>
   <div class="sheet sheet--wide" role="dialog" aria-modal="true" aria-labelledby="work-dialog-title">
     <h3 id="work-dialog-title">${esc(w.title)}</h3>
-    ${body}
+    ${who}${body}${review}
     <div class="actions">${links}<button class="btn btn--primary" type="button" data-action="close-dialog" data-autofocus>关闭</button></div></div>`;
 }
 

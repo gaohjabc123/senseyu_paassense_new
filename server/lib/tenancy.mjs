@@ -3,14 +3,22 @@
 // 角色
 //   super_admin   平台超级管理员（商予科技运营）：管理客户、有效期、模块权限、厂商凭据，查看全部日志
 //   tenant_admin  客户管理员：管理本企业成员、查看本企业使用日志与到期时间
-//   member        客户成员：在授权范围内使用工作台
+//   teacher       教师（仅院校客户）：使用工作台；查看所带班级学生提交的作品，评分与评语
+//   member        客户成员 / 学生：在授权范围内使用工作台
+//
+// 客户类型（org_type）：enterprise 企业 · vocational 高职院校 · applied 应用型本科 · university 本科院校
+// 院校客户多出「班级」这一层教学组织，以及教师角色、作品提交与批改。
 import { tx } from './db.mjs';
 import { hashPassword, verifyPassword, passwordProblem, generatePassword, newSessionToken, sha256, newId, makeCipher } from './secrets.mjs';
 import { maskValue } from './mask.mjs';
 import { AppError, E } from './errors.mjs';
 import { CAPABILITIES, capById } from '../../src/lib/capabilities.js';
 
-export const ROLES = ['super_admin', 'tenant_admin', 'member'];
+export const ROLES = ['super_admin', 'tenant_admin', 'teacher', 'member'];
+export const ORG_TYPES = ['enterprise', 'vocational', 'applied', 'university'];
+export const isSchoolType = (t) => ORG_TYPES.includes(t) && t !== 'enterprise';
+/** 批量导入账号：单次上限（每个初始密码都要做一次 scrypt，过多会阻塞服务） */
+export const IMPORT_MAX = 100;
 export const MODULE_IDS = CAPABILITIES.map((c) => c.id);
 /** 创作中心三条快捷链路分别依赖的能力模块 */
 export const SHORTCUT_MODULE = { video: 'video-image', voice: 'voice-tts', chat: 'nlp-chat' };
@@ -28,6 +36,8 @@ const isDay = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && N
 
 const fail = (code, message, hint = '', action = 'fix') => new AppError({ code, message, hint, action });
 const USERNAME_RE = /^[A-Za-z][A-Za-z0-9_.-]{2,31}$/;
+export const ORG_TYPE_LABEL = { enterprise: '企业', vocational: '高职院校', applied: '应用型本科', university: '本科院校' };
+const PREFIX_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,11}$/;
 
 export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date.now() }) {
   const cipher = makeCipher(cfg.dataEncryptionKey);
@@ -78,7 +88,7 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
   }
 
   /* ---------------- 账号与会话 ---------------- */
-  const publicUser = (u) => u && ({ id: u.id, tenantId: u.tenant_id, username: u.username, displayName: u.display_name, role: u.role, status: u.status, mustChangePassword: !!u.must_change_pw, lastLoginAt: u.last_login_at, createdAt: u.created_at });
+  const publicUser = (u) => u && ({ id: u.id, tenantId: u.tenant_id, username: u.username, displayName: u.display_name, role: u.role, classId: u.class_id ?? null, status: u.status, mustChangePassword: !!u.must_change_pw, lastLoginAt: u.last_login_at, createdAt: u.created_at });
 
   function tenantState(t) {
     if (!t) return null;
@@ -86,7 +96,7 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
     const notStarted = n < t.starts_at;
     const expired = n > t.expires_at;
     return {
-      id: t.id, name: t.name, plan: t.plan, status: t.status,
+      id: t.id, name: t.name, plan: t.plan, status: t.status, orgType: t.org_type || 'enterprise', isSchool: isSchoolType(t.org_type),
       startsAt: t.starts_at, expiresAt: t.expires_at, startsDay: toDay(t.starts_at), expiresDay: toDay(t.expires_at),
       daysLeft: expired ? 0 : Math.ceil((t.expires_at - n) / DAY),
       notStarted, expired, usable: t.status === 'active' && !notStarted && !expired,
@@ -182,6 +192,13 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
       if (!['trial', 'formal'].includes(plan)) throw fail('INVALID_INPUT', '客户类型只能是体验或正式');
       out.plan = plan;
     }
+    if (input.orgType !== undefined) {
+      if (!ORG_TYPES.includes(input.orgType)) throw fail('INVALID_INPUT', '客户类别只能是企业、高职院校、应用型本科或本科院校');
+      if (existing && isSchoolType(existing.org_type) && !isSchoolType(input.orgType) && q('SELECT 1 FROM classes WHERE tenant_id = ?').get(existing.id)) {
+        throw fail('INVALID_INPUT', '这个院校客户下已有班级，不能改为企业类别。', '如确需修改，请先由学校管理员删除全部班级。');
+      }
+      out.org_type = input.orgType;
+    }
     if (input.startsDay !== undefined || !existing) {
       if (!isDay(input.startsDay)) throw fail('INVALID_INPUT', '请选择开始日期');
       out.starts_at = dayStart(input.startsDay);
@@ -246,9 +263,9 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
     const id = newId('t');
     const initialPw = generatePassword();
     tx(db, () => {
-      q(`INSERT INTO tenants (id, name, contact, plan, starts_at, expires_at, status, max_users, modules, allow_real, allow_billable, vendor_id, note, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,'active',?,?,?,?,?,?,?,?)`).run(id, data.name, data.contact || '', data.plan, data.starts_at, data.expires_at, data.max_users, data.modules,
-        data.allow_real || 0, data.allow_billable || 0, data.vendor_id ?? null, data.note || '', now(), now());
+      q(`INSERT INTO tenants (id, name, contact, plan, starts_at, expires_at, status, max_users, modules, allow_real, allow_billable, vendor_id, note, org_type, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?)`).run(id, data.name, data.contact || '', data.plan, data.starts_at, data.expires_at, data.max_users, data.modules,
+        data.allow_real || 0, data.allow_billable || 0, data.vendor_id ?? null, data.note || '', data.org_type || 'enterprise', now(), now());
       q(`INSERT INTO users (id, tenant_id, username, display_name, role, pw_hash, must_change_pw, created_at, created_by) VALUES (?,?,?,?,'tenant_admin',?,1,?,?)`)
         .run(newId('u'), id, admin.username, String(admin.displayName || '管理员').slice(0, 30), hashPassword(initialPw), now(), actor.id);
     });
@@ -272,6 +289,7 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
     if (data.modules && data.modules !== JSON.stringify(t.modules)) changes.push(`模块 ${JSON.parse(data.modules).length} 项`);
     if (data.allow_real !== undefined && !!data.allow_real !== t.allow_real) changes.push(data.allow_real ? '开通真实环境' : '关闭真实环境');
     if (data.vendor_id !== undefined && data.vendor_id !== t.vendor_id) changes.push(`厂商凭据 → ${vendorName(data.vendor_id) || '无'}`);
+    if (data.org_type && data.org_type !== (t.org_type || 'enterprise')) changes.push(`类别 → ${ORG_TYPE_LABEL[data.org_type]}`);
     if (data.plan && data.plan !== t.plan) changes.push(data.plan === 'formal' ? '转为正式客户' : '改为体验客户');
     if (data.status === 'disabled') q('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)').run(id);
     audit(actor, 'tenant.update', `「${data.name || t.name}」${changes.join('；') || '更新资料'}`, ip);
@@ -286,8 +304,28 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
   }
 
   /* ---------------- 成员 ---------------- */
+  const ROLE_ORDER = `CASE role WHEN 'tenant_admin' THEN 0 WHEN 'teacher' THEN 1 ELSE 2 END`;
   function listUsers(tenantId) {
-    return q('SELECT * FROM users WHERE tenant_id = ? ORDER BY role DESC, created_at').all(tenantId).map(publicUser);
+    return q(`SELECT u.*, c.name AS class_name FROM users u LEFT JOIN classes c ON c.id = u.class_id WHERE u.tenant_id = ? ORDER BY ${ROLE_ORDER}, u.created_at`)
+      .all(tenantId).map((u) => ({ ...publicUser(u), className: u.class_name || '' }));
+  }
+
+  const ROLE_NAME = (t, role) => (isSchoolType(t.org_type) ? { tenant_admin: '学校管理员', teacher: '教师', member: '学生' } : { tenant_admin: '管理员', member: '成员' })[role] || role;
+
+  /** 校验并规范化角色：教师角色只对院校客户开放 */
+  function normRole(t, role, fallback = 'member') {
+    const r = role === undefined || role === null || role === '' ? fallback : role;
+    if (!['tenant_admin', 'teacher', 'member'].includes(r)) throw fail('INVALID_INPUT', '角色不合法');
+    if (r === 'teacher' && !isSchoolType(t.org_type)) throw fail('INVALID_INPUT', '教师角色只对院校客户开放。', '如需使用班级与批改功能，请联系商予科技把客户类别改为院校。', 'contact');
+    return r;
+  }
+
+  /** 校验班级属于该客户；返回班级行或 null（不分班） */
+  function classOf(tenantId, classId) {
+    if (classId === undefined || classId === null || classId === '') return null;
+    const c = q('SELECT * FROM classes WHERE id = ? AND tenant_id = ?').get(String(classId), tenantId);
+    if (!c) throw fail('INVALID_INPUT', '所选班级不存在。', '请刷新页面后重新选择。');
+    return c;
   }
 
   function userRow(id) { const u = q('SELECT * FROM users WHERE id = ?').get(id); if (!u) throw E.notFound('账号不存在。', '请刷新列表。'); return u; }
@@ -303,16 +341,74 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
     if (actor.role !== 'super_admin' && actor.tenant_id !== tenantId) throw fail('FORBIDDEN', '没有权限。');
     const username = String(input.username || '').trim();
     if (!USERNAME_RE.test(username)) throw fail('INVALID_INPUT', '用户名需以字母开头，3～32 位字母、数字、下划线、点或短横线');
-    const role = input.role === 'tenant_admin' ? 'tenant_admin' : 'member';
+    const role = normRole(t, input.role);
+    const cls = classOf(tenantId, input.classId);
     const count = q('SELECT COUNT(*) AS n FROM users WHERE tenant_id = ?').get(tenantId).n;
     if (count >= t.max_users) throw fail('SEAT_LIMIT', `成员数已达上限（${t.max_users} 人）。`, '可以停用或删除不再使用的账号；需要更多名额请联系商予科技。', 'contact');
     if (q('SELECT 1 FROM users WHERE username = ?').get(username)) throw fail('USERNAME_TAKEN', `用户名 ${username} 已被使用`, '换一个用户名，比如加上企业缩写。');
     const initialPw = generatePassword();
     const id = newId('u');
-    q(`INSERT INTO users (id, tenant_id, username, display_name, role, pw_hash, must_change_pw, created_at, created_by) VALUES (?,?,?,?,?,?,1,?,?)`)
-      .run(id, tenantId, username, String(input.displayName || '').trim().slice(0, 30), role, hashPassword(initialPw), now(), actor.id);
-    writeLog({ category: 'admin', action: 'user.create', tenantId, userId: actor.id, username: actor.username, detail: `添加${role === 'tenant_admin' ? '管理员' : '成员'} ${username}`, ip });
+    q(`INSERT INTO users (id, tenant_id, username, display_name, role, pw_hash, must_change_pw, created_at, created_by, class_id) VALUES (?,?,?,?,?,?,1,?,?,?)`)
+      .run(id, tenantId, username, String(input.displayName || '').trim().slice(0, 30), role, hashPassword(initialPw), now(), actor.id, cls?.id ?? null);
+    writeLog({ category: 'admin', action: 'user.create', tenantId, userId: actor.id, username: actor.username, detail: `添加${ROLE_NAME(t, role)} ${username}${cls ? `（${cls.name}）` : ''}`, ip });
     return { user: publicUser(userRow(id)), initialPassword: initialPw };
+  }
+
+  /**
+   * 批量导入账号（开学建班用）：rows = [{ username, displayName, className }]
+   * · prefix 会拼在每个用户名前面（学号是纯数字时必填，例如 szpt → szpt20260101）
+   * · 院校客户：班级不存在时自动创建；企业客户忽略班级列
+   * · 全部校验通过才写入，任何一行有问题都不会产生半截数据
+   */
+  function importUsers(actor, tenantId, input, ip) {
+    const t = tenantRow(tenantId);
+    if (actor.role !== 'super_admin' && !(actor.role === 'tenant_admin' && actor.tenant_id === tenantId)) throw fail('FORBIDDEN', '没有权限。');
+    const school = isSchoolType(t.org_type);
+    const prefix = String(input.prefix || '').trim();
+    if (prefix && !PREFIX_RE.test(prefix)) throw fail('INVALID_INPUT', '用户名前缀需以字母开头，最多 12 位字母、数字、下划线、点或短横线');
+    const role = normRole(t, input.role);
+    if (role === 'tenant_admin') throw fail('INVALID_INPUT', '批量导入不能直接创建管理员。', '请导入后在列表里单独设为管理员。');
+    const rows = Array.isArray(input.rows) ? input.rows : [];
+    if (!rows.length) throw fail('INVALID_INPUT', '名单是空的。', '每行一个账号：用户名（或学号）,姓名,班级');
+    if (rows.length > IMPORT_MAX) throw fail('INVALID_INPUT', `一次最多导入 ${IMPORT_MAX} 个账号。`, '请按班级分批导入。');
+    const seen = new Set();
+    const items = rows.map((r, i) => {
+      const line = `第 ${i + 1} 行`;
+      const username = prefix + String(r?.username ?? '').trim();
+      if (!USERNAME_RE.test(username)) throw fail('INVALID_INPUT', `${line}：用户名「${username.slice(0, 40)}」不合法。`, '用户名需以字母开头，3～32 位字母、数字、下划线、点或短横线；学号是纯数字时请填写「用户名前缀」。');
+      const key = username.toLowerCase();
+      if (seen.has(key)) throw fail('INVALID_INPUT', `${line}：用户名 ${username} 在名单里重复了。`);
+      seen.add(key);
+      if (q('SELECT 1 FROM users WHERE username = ?').get(username)) throw fail('USERNAME_TAKEN', `${line}：用户名 ${username} 已被使用。`, '换一个用户名前缀（例如学校缩写），或从名单里去掉已有账号。');
+      const className = school ? String(r?.className ?? '').trim() : '';
+      if (className.length > 40) throw fail('INVALID_INPUT', `${line}：班级名称最多 40 个字。`);
+      return { username, displayName: String(r?.displayName ?? '').trim().slice(0, 30), className };
+    });
+    const count = q('SELECT COUNT(*) AS n FROM users WHERE tenant_id = ?').get(tenantId).n;
+    if (count + items.length > t.max_users) {
+      throw fail('SEAT_LIMIT', `名额不够：已有 ${count} 人，本次导入 ${items.length} 人，上限 ${t.max_users} 人。`, '可以分批导入、清理不再使用的账号，或联系商予科技增加名额。', 'contact');
+    }
+    const created = items.map((it) => ({ ...it, id: newId('u'), initialPw: generatePassword() }));
+    const hashes = created.map((c) => hashPassword(c.initialPw)); // 放在事务外：scrypt 较慢
+    const classesCreated = [];
+    tx(db, () => {
+      const classIds = new Map(q('SELECT id, name FROM classes WHERE tenant_id = ?').all(tenantId).map((c) => [c.name, c.id]));
+      created.forEach((c, i) => {
+        let classId = null;
+        if (c.className) {
+          classId = classIds.get(c.className);
+          if (!classId) {
+            classId = newId('c');
+            q('INSERT INTO classes (id, tenant_id, name, teacher_id, created_at, created_by) VALUES (?,?,?,NULL,?,?)').run(classId, tenantId, c.className, now(), actor.id);
+            classIds.set(c.className, classId); classesCreated.push(c.className);
+          }
+        }
+        q(`INSERT INTO users (id, tenant_id, username, display_name, role, pw_hash, must_change_pw, created_at, created_by, class_id) VALUES (?,?,?,?,?,?,1,?,?,?)`)
+          .run(c.id, tenantId, c.username, c.displayName, role, hashes[i], now(), actor.id, classId);
+      });
+    });
+    writeLog({ category: 'admin', action: 'user.import', tenantId, userId: actor.id, username: actor.username, detail: `批量导入 ${created.length} 个${ROLE_NAME(t, role)}账号${classesCreated.length ? `，新建班级 ${classesCreated.join('、')}` : ''}`, ip });
+    return { created: created.map((c) => ({ username: c.username, displayName: c.displayName, className: c.className, initialPassword: c.initialPw })), classesCreated };
   }
 
   function updateUser(actor, id, input, ip) {
@@ -325,15 +421,23 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
       if (u.id === actor.id && input.status === 'disabled') throw fail('INVALID_INPUT', '不能停用自己的账号');
       patch.status = input.status;
     }
+    const t = u.tenant_id ? tenantRow(u.tenant_id) : null;
     if (input.role !== undefined) {
-      if (!['tenant_admin', 'member'].includes(input.role)) throw fail('INVALID_INPUT', '角色不合法');
-      if (u.id === actor.id && input.role !== u.role) throw fail('INVALID_INPUT', '不能修改自己的角色');
-      patch.role = input.role;
+      const role = normRole(t, input.role, u.role);
+      if (u.id === actor.id && role !== u.role) throw fail('INVALID_INPUT', '不能修改自己的角色');
+      if (u.role === 'tenant_admin' && role !== 'tenant_admin' && u.status === 'active' && q(`SELECT COUNT(*) AS n FROM users WHERE tenant_id = ? AND role = 'tenant_admin' AND status = 'active'`).get(u.tenant_id).n <= 1) {
+        throw fail('INVALID_INPUT', '这是唯一的管理员，不能改为其他角色。', '先把另一个账号设为管理员。');
+      }
+      patch.role = role;
     }
+    if (input.classId !== undefined) patch.class_id = classOf(u.tenant_id, input.classId)?.id ?? null;
     const cols = Object.keys(patch);
     if (cols.length) q(`UPDATE users SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => patch[c]), id);
     if (patch.status === 'disabled') q('DELETE FROM sessions WHERE user_id = ?').run(id);
-    writeLog({ category: 'admin', action: 'user.update', tenantId: u.tenant_id, userId: actor.id, username: actor.username, detail: `${u.username}：${[patch.status && (patch.status === 'active' ? '启用' : '停用'), patch.role && (patch.role === 'tenant_admin' ? '设为管理员' : '设为成员'), patch.display_name !== undefined && '改名'].filter(Boolean).join('、') || '无变化'}`, ip });
+    // 不再是教师 / 管理员的账号，不能继续挂在班级的「任课教师」上
+    if (patch.role === 'member' && u.role !== 'member') q('UPDATE classes SET teacher_id = NULL WHERE teacher_id = ?').run(id);
+    const className = patch.class_id ? q('SELECT name FROM classes WHERE id = ?').get(patch.class_id)?.name : '';
+    writeLog({ category: 'admin', action: 'user.update', tenantId: u.tenant_id, userId: actor.id, username: actor.username, detail: `${u.username}：${[patch.status && (patch.status === 'active' ? '启用' : '停用'), patch.role && patch.role !== u.role && `设为${ROLE_NAME(t, patch.role)}`, patch.class_id !== undefined && patch.class_id !== u.class_id && (patch.class_id ? `调入 ${className}` : '移出班级'), patch.display_name !== undefined && '改名'].filter(Boolean).join('、') || '无变化'}`, ip });
     return publicUser(userRow(id));
   }
 
@@ -354,7 +458,8 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
     if (u.role === 'tenant_admin' && q(`SELECT COUNT(*) AS n FROM users WHERE tenant_id = ? AND role = 'tenant_admin' AND status = 'active'`).get(u.tenant_id).n <= 1) {
       throw fail('INVALID_INPUT', '这是企业唯一的管理员，不能删除。', '先把另一位成员设为管理员。');
     }
-    q('DELETE FROM users WHERE id = ?').run(id);
+    q('UPDATE classes SET teacher_id = NULL WHERE teacher_id = ?').run(id);
+    q('DELETE FROM users WHERE id = ?').run(id); // 会话与作品级联删除
     writeLog({ category: 'admin', action: 'user.delete', tenantId: u.tenant_id, userId: actor.id, username: actor.username, detail: `删除 ${u.username}`, ip });
   }
 
@@ -511,7 +616,7 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
     listKeys, createKey, revokeKey, resolveKey, tenantRaw,
     bootstrap, createSuperAdmin, login, resolveSession, logout, changePassword, publicUser, tenantState,
     listTenants, getTenant, createTenant, updateTenant, deleteTenant,
-    listUsers, createUser, updateUser, resetPassword, deleteUser,
+    listUsers, createUser, importUsers, updateUser, resetPassword, deleteUser,
     listVendors, saveVendor, deleteVendor, vendorConfig,
     accessOf, assertModule, writeLog, queryLogs, usageStats, pruneLogs, audit,
   };
