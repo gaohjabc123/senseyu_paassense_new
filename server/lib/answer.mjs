@@ -50,6 +50,22 @@ export async function streamDeepSeek(cfg, question, hits, onDelta, { fetchImpl =
   return answer;
 }
 
+/** 调 DeepSeek（OpenAI 兼容）非流式接口，返回完整回答文本（拟人改写等单次调用用） */
+export async function completeDeepSeek(cfg, messages, { fetchImpl = (...a) => fetch(...a), timeoutMs = 60000 } = {}) {
+  if (!cfg.deepseekKey) throw Object.assign(new Error('未配置大模型（DEEPSEEK_API_KEY）'), { code: 'LLM_NOT_CONFIGURED' });
+  const resp = await fetchImpl(`${cfg.deepseekBaseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.deepseekKey}` },
+    body: JSON.stringify({ model: cfg.deepseekModel, stream: false, temperature: 0.7, messages }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!resp.ok) throw Object.assign(new Error(`DeepSeek HTTP ${resp.status}`), { upstreamStatus: resp.status });
+  const j = await resp.json();
+  const text = j?.choices?.[0]?.message?.content;
+  if (!text) throw new Error('大模型未返回内容');
+  return String(text).trim();
+}
+
 /**
  * emit(event, data)：meta / message / done / error
  * 返回最终答案文本

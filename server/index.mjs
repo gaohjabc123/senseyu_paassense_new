@@ -14,9 +14,10 @@ import { createMock } from './mock.mjs';
 import { getConfig } from './lib/config.mjs';
 import { VERSION } from './lib/version.mjs';
 import { TokenManager } from './lib/token.mjs';
-import { createRuyingClient } from './lib/ruying.mjs';
+import { createRuyingClient, normalizeDuration } from './lib/ruying.mjs';
 import { KbStore } from './lib/kb.mjs';
-import { answerQuestion } from './lib/answer.mjs';
+import { answerQuestion, completeDeepSeek } from './lib/answer.mjs';
+import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveChannelParam, buildDecorationTaskBody, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
 import { maskValue, redactText } from './lib/mask.mjs';
 import { AppError, E, toAppError, errorBody } from './lib/errors.mjs';
 import { openDb } from './lib/db.mjs';
@@ -198,7 +199,24 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       }));
   }
 
-  async function opCapability(ctx, modeArg, id, params = {}) {
+  /* ---------- 核心能力操作（门户与开放接口共用） ----------
+   * 真实链路（2.6.0）：每个能力按平台文档接通，不再把表单原样 POST 给平台。
+   *   video-tts：TTS + 默认形象图 → 图片数字人（与创作中心视频口播同一链路）
+   *   video-image：图片数字人（已验证；加厂商额度预检）
+   *   voice-tts：TTS（已验证）
+   *   voice-clone：音色复刻（文档请求体；异步任务）
+   *   voice-nlp：平台无接口，自建 DeepSeek 按场景改写
+   *   avatar-train：形象复刻（文档请求体；异步任务）
+   *   avatar-green：绿幕分割预览接口（图片/视频两路；异步任务）
+   *   avatar-update：模型重建（文档扁平字段；异步任务）
+   *   image-edit：图片编辑（文档请求体；异步任务）
+   *   video-script：生成文档级有效的 video/create param；填了形象信息时提交到平台生成
+   *   nlp-kb：平台无接口；下载文档存进服务端自建知识库
+   *   nlp-chat：平台无接口；服务端自建检索 + 大模型回答
+   *   live-script / live-pro：创建直播间（创建即开始计时；需已训练并预热的形象）
+   *   live-multi：创建装修任务（第一步；直播创建是第二步，需 FINISHED 素材与并发路数）
+   */
+  async function opCapability(ctx, modeArg, id, params = {}, wsOf) {
     const cap = capById(id);
     if (!cap) throw E.notFound('没有这项能力。', '请回到能力目录重新选择。');
     guard(ctx, cap.id, 'capability.run');
@@ -207,21 +225,146 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
     return track(ctx, { action: 'capability.run', capability: cap.id, mode }, () => metered(ctx, mode, cost, cap.id, async (charge) => {
       if (mode !== 'real') return MOCK.runCapability(id, params);
       const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
-      if (cap.id === 'voice-tts') {
-        if (words(params.text) < 4) throw E.validation('文案至少 4 个字，请再写一点。');
-        const r = await rt.client.tts(String(params.text));
-        return { sync: true, result: { capabilityId: id, output: 'audio', title: cap.experience.mockTitle || cap.name, audioUrl: r.audio_url, durationMs: r.duration_ms, mode: 'real' } };
+      const client = rt.client;
+      const registerTask = (taskId, output) => {
+        realTasks.set(taskId, { owner: ctx.access.workspace, vendorId: ctx.access.vendorId, capability: cap.id, charge });
+        return { sync: false, taskId, output: output || cap.experience?.output || 'video', mode: 'real' };
+      };
+      const syncJson = (json, note) => ({ sync: true, result: { capabilityId: id, output: 'json', title: cap.experience.mockTitle || cap.name, json, jsonText: JSON.stringify(json, null, 2), mode: 'real', ...(note ? { realModeNote: note } : {}) } });
+      const qid = rt.vcfg.ttsQid || cfg.ttsQid || '';
+
+      if (cap.id === 'video-tts') {
+        const text = String(params.text || '').trim();
+        if (words(text) < 4) throw E.validation('文案至少 4 个字，请再写一点。');
+        if (words(text) > 200) throw E.validation('文案最多 200 个字，请删减后再生成。');
+        const duration = normalizeDuration(words(text) / 3.8);
+        await assertVendorQuota(client, 'genImageVideoDuration', duration, '图片数字人');
+        const audio = await client.tts(text);
+        const img = rt.vcfg.avatarImageUrl;
+        if (!img) throw fail('AVATAR_NOT_CONFIGURED', '没有可用的数字人形象图片。', '请管理员在「厂商凭据」里配置一个默认形象图。', 'config');
+        const taskId = await client.createImageAvatar({ imageUrl: img, audioUrl: audio.audio_url, duration, videoName: `口播${text.slice(0, 16)}` });
+        return registerTask(taskId, 'video');
       }
       if (cap.id === 'video-image') {
         if (!/^https?:\/\//.test(params.imageUrl || '') || !/^https?:\/\//.test(params.audioUrl || '')) throw E.validation('真实环境需要填写可公网访问的图片和音频地址（http/https）。');
-        const taskId = await rt.client.createImageAvatar({ imageUrl: params.imageUrl, audioUrl: params.audioUrl, duration: params.duration, videoName: String(params.prompt || cap.name).slice(0, 40) });
-        realTasks.set(taskId, { owner: ctx.access.workspace, vendorId: ctx.access.vendorId, capability: cap.id, charge });
-        return { sync: false, taskId, output: 'video', mode: 'real' };
+        const duration = normalizeDuration(params.duration);
+        await assertVendorQuota(client, 'genImageVideoDuration', duration, '图片数字人');
+        const taskId = await client.createImageAvatar({ imageUrl: params.imageUrl, audioUrl: params.audioUrl, duration, videoName: String(params.prompt || cap.name).slice(0, 40) });
+        return registerTask(taskId, 'video');
       }
-      if (cap.realApi) {
-        const data = await rt.client.post(cap.realApi, params, { billable: cap.billable });
-        return { sync: true, result: { capabilityId: id, output: 'json', title: `${cap.name}（平台回执）`, json: data, jsonText: JSON.stringify(data, null, 2), mode: 'real' } };
+      if (cap.id === 'voice-tts') {
+        if (words(params.text) < 4) throw E.validation('文案至少 4 个字，请再写一点。');
+        const r = await client.tts(String(params.text));
+        return { sync: true, result: { capabilityId: id, output: 'audio', title: cap.experience.mockTitle || cap.name, audioUrl: r.audio_url, durationMs: r.duration_ms, mode: 'real' } };
       }
+      if (cap.id === 'voice-clone') {
+        await assertVendorQuota(client, 'genVcModel', 1, '音色克隆模型');
+        const taskId = await client.cloneVoice(buildVoiceCloneBody(params));
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'voice-nlp') {
+        const text = String(params.text || '').trim();
+        if (!text) throw E.validation('请输入原始内容。');
+        if (!cfg.deepseekKey) throw fail('LLM_NOT_CONFIGURED', '真实环境未配置大模型。', '需要管理员在服务端配置 DEEPSEEK_API_KEY。', 'config');
+        const scene = String(params.scene || '客服口语');
+        const rewritten = await completeDeepSeek(cfg, [
+          { role: 'system', content: `你是口语化改写助手。把用户给出的内容改写成${scene}风格的口语表达，保持原意，不添加原文没有的事实，不编造数字、价格与承诺，简洁自然。只输出改写后的文本，不要解释。` },
+          { role: 'user', content: text },
+        ], { fetchImpl });
+        return { sync: true, result: { capabilityId: id, output: 'text', title: cap.experience.mockTitle || cap.name, text: rewritten, mode: 'real' } };
+      }
+      if (cap.id === 'avatar-train') {
+        await assertVendorQuota(client, 'genCharModel', 1, '人物形象模型');
+        const taskId = await client.trainAvatar(buildAvatarTrainBody(params));
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'avatar-green') {
+        const body = buildGreenPreviewBody(params);
+        const taskId = await client.greenPreview(body.kind, { materialName: body.materialName, url: body.url, param: body.param });
+        return registerTask(taskId, 'image');
+      }
+      if (cap.id === 'avatar-update') {
+        const taskId = await client.rebuildAvatar(buildAvatarRebuildBody(params));
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'image-edit') {
+        await assertVendorQuota(client, 'genEditImage', 1, 'AI 图片编辑');
+        const taskId = await client.editImage(buildImageEditBody(params));
+        return registerTask(taskId, 'image');
+      }
+      if (cap.id === 'video-script') {
+        const faceFeatureId = String(params.faceFeatureId || cfg.faceFeatureId || '').trim();
+        const modelUrl = String(params.modelUrl || cfg.avatarModelUrl || '').trim();
+        if (faceFeatureId && modelUrl) {
+          await assertVendorQuota(client, 'genVideoDuration', 1, '视频合成');
+          const body = buildVideoCreateParam(params, { qid });
+          const taskId = await client.createVideoTask(body);
+          return registerTask(taskId, 'video');
+        }
+        const param = JSON.parse(buildVideoCreateParam({ ...params, faceFeatureId: faceFeatureId || 'your_face_feature_id', modelUrl: modelUrl || 'https://example.com/avatar.zip' }, { qid }).param);
+        return syncJson(param, (faceFeatureId || modelUrl)
+          ? '形象信息不完整，未提交到平台：face_feature_id 与形象 zip 包地址两者都要填。'
+          : '这份 param 可直接提交到视频合成接口；需要先训练形象（形象复刻），拿到 face_feature_id 与 zip 包地址后填入再提交。');
+      }
+      if (cap.id === 'nlp-kb') {
+        const docUrl = String(params.docUrl || '').trim();
+        if (!/^https?:\/\//.test(docUrl)) throw E.validation('资料文档 URL 需为 http(s) 地址。');
+        const ext = docUrl.split('?')[0].split('.').pop()?.toLowerCase();
+        if (!['txt', 'md', 'markdown'].includes(ext || '')) throw fail('UNSUPPORTED_DOC', '知识库目前只支持 .txt / .md 文档。', 'PDF、Word 请先转成纯文本再上传，或用工作台「知识库管理」上传文件。', 'fix');
+        let content;
+        try {
+          const resp = await fetchImpl(docUrl, { signal: AbortSignal.timeout(20000) });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          content = await resp.text();
+        } catch (e) {
+          throw fail('DOC_FETCH_FAILED', '资料文档下载失败。', '请确认地址可公网访问，或直接在工作台「知识库管理」里上传文件。', 'retry');
+        }
+        if (!content.trim()) throw fail('DOC_EMPTY', '下载到的文档是空的。');
+        const ws = wsOf();
+        const baseName = String(params.name || '未命名知识库').trim() || '未命名知识库';
+        const fileName = /\.(txt|md|markdown)$/i.test(baseName) ? baseName : `${baseName}.md`;
+        try {
+          const doc = kb.add(ws, { name: fileName, content });
+          return syncJson({ kbId: doc.id, name: doc.name, chars: doc.chars, chunkCount: doc.chunkCount, docCount: kb.list(ws).length, status: '已入库', desc: String(params.desc || '') }, '已存进服务端知识库，现在可以在「流式问答助手」里提问。');
+        } catch (e) {
+          if (e.kbCode) throw fail(`KB_${e.kbCode}`, e.message, '列表里已有这份资料，可以直接提问。', 'fix');
+          throw e;
+        }
+      }
+      if (cap.id === 'nlp-chat') {
+        const question = String(params.text || '').trim();
+        if (!question) throw E.validation('请输入问题。');
+        if (question.length > 500) throw E.validation('问题太长了，请控制在 500 字以内。');
+        const ws = wsOf();
+        let answer = '';
+        let note = '';
+        const emit = (event, data) => {
+          if (event === 'message') answer += data.delta || '';
+          if (event === 'meta' && data.notice) note = data.notice;
+        };
+        const finalAnswer = await answerQuestion({ kb, ws, question, mode: 'real', cfg, emit, deps: { fetchImpl } });
+        const text = finalAnswer || answer;
+        return { sync: true, result: { capabilityId: id, output: 'chat', title: cap.experience.mockTitle || cap.name, text, mode: 'real', ...(note ? { realModeNote: note } : {}) } };
+      }
+      if (cap.id === 'live-script' || cap.id === 'live-pro') {
+        await assertVendorQuota(client, 'liveDuration', 1, '直播');
+        const body = buildLiveChannelParam(params, { qid, faceFeatureId: cfg.liveFaceFeatureId, fileId: cfg.liveFileId });
+        const session = await client.createLiveChannel(body);
+        const json = {
+          sessionId: session.sessionId,
+          status: session.status,
+          statusText: session.status === 35 ? '视频流创建完成、可开播' : session.status === 32 ? '视频流创建中' : `状态 ${session.status}`,
+          pullRtmpUrl: session.pullRtmpUrl || '', pullFlvUrl: session.pullFlvUrl || '', pullHlsUrl: session.pullHlsUrl || '',
+          ...(cap.id === 'live-pro' ? { controlApi: 'POST /api/2dvh/v1/material/live/super/pro/channel/control（切换数字人 / 前景 / 背景）' } : {}),
+        };
+        return syncJson(json, '直播间已创建，开始计时；尚未开播。开播需调 start 接口并每 60 秒发送心跳；不发送心跳会在阈值后被动关闭。');
+      }
+      if (cap.id === 'live-multi') {
+        const body = buildDecorationTaskBody(params, { faceFeatureId: cfg.liveFaceFeatureId, fileId: cfg.liveFileId });
+        const taskId = await client.createDecorationTask(body);
+        return syncJson({ decorationTaskId: taskId, statusQuery: `GET /api/2dvh/v1/multi-video-live/decoration-tasks/${taskId}`, next: '子素材状态 FINISHED 后，才能用 materialId 创建直播（需推流 RTMP 地址与播放列表）。' }, '装修任务已创建；直播创建是第二步，需要 FINISHED 素材与可用并发路数。');
+      }
+      // 未覆盖的能力：仍按旧口径返回演示结果并如实说明
       const r = MOCK.runCapability(id, params);
       const note = `「${cap.name}」需要先在如影控制台准备前置资源（模型 / 知识库 / 直播间等），此处返回的是演示结果。`;
       if (r.result) r.result.realModeNote = note; else r.realModeNote = note;
@@ -240,7 +383,10 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         if (t.status === 9) Q.refund(real.charge, `平台任务 ${id} 失败，自动退回`);
         T.writeLog({ category: categoryOf(ctx), action: 'task.finish', capability: real.capability, mode: 'real', ok: t.status === 5, code: t.status === 9 ? 'TASK_FAILED' : null, detail: `任务 ${id}${t.status === 9 && real.charge ? '，已退回额度' : ''}`, ...actorOf(ctx) });
       }
-      return { ...t, mode: 'real' };
+      // 2.6.0：按能力把平台任务结果规整成前端可直接渲染的形状（带 output 字段）
+      const extracted = extractTaskResult(real.capability, t);
+      const result = extracted ?? t.result;
+      return { ...t, result, output: result?.output || capById(real.capability)?.experience?.output || 'video', mode: 'real' };
     }
     const t = MOCK.task(id);
     if (!t) throw E.notFound('找不到这个任务。', '演示任务在服务重启后会被清空，请重新提交。');
@@ -556,7 +702,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
 
     if (p === '/api/capability/run' && m === 'POST') {
       const { id, params = {} } = await readBody(req);
-      return ok(res, await opCapability(ctx, () => modeOf(req, ctx), id, params));
+      return ok(res, await opCapability(ctx, () => modeOf(req, ctx), id, params, () => workspaceOf(req, ctx)));
     }
     if ((p === '/api/capability/task' || p === '/api/task') && m === 'POST') {
       const { id } = await readBody(req);

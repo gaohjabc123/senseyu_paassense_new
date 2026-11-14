@@ -31,7 +31,8 @@ export function costOf(kind, { capId, params = {}, text, duration } = {}) {
     if (capId === 'video-image') return { meter: 'video_seconds', amount: normalizeSeconds(params.duration) };
     if (capId === 'video-tts') return { meter: 'video_seconds', amount: normalizeSeconds(words(params.text) / 3.8) };
     if (VIDEO_CAPS.has(capId)) return { meter: 'video_seconds', amount: 5 };
-    return cap.realApi ? { meter: 'api_calls', amount: 1 } : null;
+    // 2.6.0：其余能力真实调用也计量（平台直连 / DeepSeek / 知识库均为 1 次其他能力调用）
+    return { meter: 'api_calls', amount: 1 };
   }
   return null;
 }

@@ -52,6 +52,11 @@ export function getConfig(env = process.env, file = loadDotEnv()) {
     tsUnit,
     ttsQid: pick('RUYING_TTS_QID'),
     avatarImageUrl: pick('RUYING_AVATAR_IMAGE_URL'),
+    // 2.6.0 真实链路可选配置（均无默认值；未配时相关能力报明确的前置条件，不静默失败）
+    faceFeatureId: pick('RUYING_FACE_FEATURE_ID'), // 已训练形象的 face_feature_id（视频合成 param 用）
+    avatarModelUrl: pick('RUYING_AVATAR_MODEL_URL'), // 已训练形象的 zip 包地址（视频合成 digital_role.url 用）
+    liveFaceFeatureId: pick('RUYING_LIVE_FACE_FEATURE_ID'), // 直播用形象 face_feature_id
+    liveFileId: pick('RUYING_LIVE_FILE_ID'), // 直播预热素材 fileId
     allowBillable: pick('ALLOW_BILLABLE', 'false').toLowerCase() === 'true',
     deepseekKey: pick('DEEPSEEK_API_KEY'),
     deepseekBaseUrl: pick('DEEPSEEK_BASE_URL', 'https://api.deepseek.com').replace(/\/+$/, ''),

@@ -20,6 +20,23 @@ export const PLATFORM = {
     body: ({ videoName, imageUrl, audioUrl, duration }) => ({ videoName, param: JSON.stringify({ imageUrl, audioUrl, duration }) }),
   },
   taskInfo: { path: '/api/2dvh/v1/task/info', body: (ids) => ({ ids }) },
+  // 以下为 2.6.0 真实链路新增：请求体由 server/lib/realcap.mjs 按文档构造
+  videoCreate: { path: '/api/2dvh/v1/material/video/create' },
+  voiceClone: { path: '/api/2dvh/v1/material/voice/clone/qid/create' },
+  avatarTrain: { path: '/api/2dvh/v1/material/2davatar/model/multi/create' },
+  avatarRebuild: { path: '/api/2dvh/v1/material/2davatar/model/rebuilding/video' },
+  imageEdit: { path: '/api/2dvh/v1/material/single/image/edit' },
+  greenImage: { path: '/api/2dvh/v1/material/2davatar/model/green/segment/image/create' },
+  greenVideo: { path: '/api/2dvh/v1/material/2davatar/model/green/segment/video/create' },
+  liveCreate: { path: '/api/2dvh/v2/material/live/channel/create' },
+  liveStart: { path: '/api/2dvh/v1/material/live/channel/start' },
+  liveHeartbeat: { path: '/api/2dvh/v1/material/live/channel/heartbeat' },
+  liveCommand: { path: '/api/2dvh/v2/material/live/channel/command' },
+  decorationCreate: { path: '/api/2dvh/v1/multi-video-live/decoration-tasks' },
+  multiChannelCreate: { path: '/api/2dvh/v1/multi-video-live/channel/create' },
+  multiChannelStart: { path: '/api/2dvh/v1/multi-video-live/channel/start' },
+  multiHeartbeat: { path: '/api/2dvh/v1/live/video-interactive/channel/heartbeat' },
+  multiChannelClose: { path: '/api/2dvh/v1/live/video-interactive/channel/close' },
 };
 
 /** duration 规整：整数秒、至少 5 秒 */
@@ -64,6 +81,8 @@ export function normalizeTask(t, fallbackId) {
     id: String(pick(t, ['id', 'taskId']) ?? fallbackId),
     status,
     statusText: TASK_STATUS_TEXT[status] || `状态 ${status}`,
+    title: pick(t, ['materialName', 'name']) || '',
+    raw: product, // 解析后的 productParam，供各能力提取 QID / 图片地址 / face_feature_id 等
     result: status === 5 && videoUrl ? {
       videoUrl,
       thumbUrl: pick(product, ['thumbPath', 'thumbUrl', 'coverUrl']) || '',
@@ -89,6 +108,7 @@ export function normalizeVendorResource(data = {}) {
     { key: 'genTtsCharVoiceModel', label: 'TTS 音色模型', unit: '个' },
     { key: 'genVcModel', label: '音色克隆模型', unit: '个' },
     { key: 'genEditImage', label: 'AI 图片编辑', unit: '个' },
+    { key: 'videoInteractiveLive', label: '视频互动直播并发', unit: '路' },
   ];
   const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
   return FIELDS.map(({ key, label, unit }) => {
@@ -96,6 +116,13 @@ export function normalizeVendorResource(data = {}) {
     const used = round2(rc[`${key}UsageQty`]);
     return { key, label, unit, allocated, used, remaining: round2(allocated - used) };
   });
+}
+
+/** 从平台响应里取任务 id（整数或 {taskId} 对象） */
+function taskIdOf(data, what) {
+  const id = typeof data === 'object' ? pick(data, ['taskId', 'id']) : data;
+  if (id === undefined || id === null || id === '') throw E.upstream(400, `${what}已提交但平台未返回任务编号`, `${what} without taskId`);
+  return String(id);
 }
 
 export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(...a), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), invalidCodes = [] } = {}) {
@@ -199,6 +226,90 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
       const item = list.find((t) => String(pick(t, ['id', 'taskId'])) === String(id)) || list[0];
       if (!item) throw E.notFound('平台上找不到这个任务。', '任务可能已过期，请重新生成。');
       return normalizeTask(item, id);
+    },
+
+    /** 视频合成（video/create）：提交已构造好的 videoName + param，返回任务编号 */
+    async createVideoTask({ videoName, param }) {
+      const data = await post(PLATFORM.videoCreate.path, { videoName, param }, { billable: true });
+      return taskIdOf(data, '视频合成');
+    },
+
+    /** 音色复刻：提交训练任务，返回任务编号（QID 训练完成后在任务结果里） */
+    async cloneVoice(body) {
+      const data = await post(PLATFORM.voiceClone.path, body, { billable: true });
+      return taskIdOf(data, '音色复刻');
+    },
+
+    /** 形象复刻：提交训练任务，返回任务编号 */
+    async trainAvatar(body) {
+      const data = await post(PLATFORM.avatarTrain.path, body, { billable: true });
+      return taskIdOf(data, '形象复刻');
+    },
+
+    /** 人物模型更新：提交重建任务，返回任务编号 */
+    async rebuildAvatar(body) {
+      const data = await post(PLATFORM.avatarRebuild.path, body, { billable: true });
+      return taskIdOf(data, '模型更新');
+    },
+
+    /** AI 图片编辑：提交异步任务，返回任务编号 */
+    async editImage(body) {
+      const data = await post(PLATFORM.imageEdit.path, body, { billable: true });
+      return taskIdOf(data, '图片编辑');
+    },
+
+    /** 绿幕分割效果预览：kind 为 image 或 video，返回任务编号 */
+    async greenPreview(kind, body) {
+      const path = kind === 'video' ? PLATFORM.greenVideo.path : PLATFORM.greenImage.path;
+      const data = await post(path, body, { billable: false });
+      return taskIdOf(data, '绿幕预览');
+    },
+
+    /** 直播：创建直播间（创建即开始计时），返回会话信息 */
+    async createLiveChannel(body) {
+      const data = await post(PLATFORM.liveCreate.path, body, { billable: true });
+      if (!data || typeof data !== 'object' || !data.sessionId) throw E.upstream(400, '直播间创建未返回会话编号', 'live create without sessionId');
+      return data;
+    },
+
+    /** 直播：开播 / 心跳（60 秒一次，心跳丢失超阈值会被动关闭） */
+    async liveStart(sessionId) {
+      return post(PLATFORM.liveStart.path, { sessionId }, { billable: false });
+    },
+    async liveHeartbeat(sessionId) {
+      return post(PLATFORM.liveHeartbeat.path, { sessionId }, { billable: false });
+    },
+
+    /** 直播接管：把一段文案推给数字人播报，返回 {isSuccess, commandTraceId} */
+    async liveCommand(sessionId, param) {
+      return post(PLATFORM.liveCommand.path, { sessionId, param: JSON.stringify(param) }, { billable: false });
+    },
+
+    /** 视频互动直播：创建装修任务，返回父任务 id（整数） */
+    async createDecorationTask(body) {
+      const data = await post(PLATFORM.decorationCreate.path, body, { billable: true });
+      return taskIdOf(data, '装修任务');
+    },
+
+    /** 视频互动直播：查询装修任务状态（GET） */
+    async decorationTaskStatus(id) {
+      return get(`${PLATFORM.decorationCreate.path}/${encodeURIComponent(id)}`);
+    },
+
+    /** 视频互动直播：创建直播任务，返回会话信息 */
+    async createMultiChannel(body) {
+      const data = await post(PLATFORM.multiChannelCreate.path, body, { billable: true });
+      if (!data || typeof data !== 'object' || !data.sessionId) throw E.upstream(400, '互动直播创建未返回会话编号', 'multi-live create without sessionId');
+      return data;
+    },
+    async multiChannelStart(sessionId) {
+      return post(PLATFORM.multiChannelStart.path, { sessionId }, { billable: false });
+    },
+    async multiHeartbeat(sessionId) {
+      return post(PLATFORM.multiHeartbeat.path, { sessionId }, { billable: false });
+    },
+    async multiChannelClose(sessionId) {
+      return post(PLATFORM.multiChannelClose.path, { sessionId }, { billable: false });
     },
   };
 }

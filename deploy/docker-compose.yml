@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
-    image: yunfan-digital-human:2.5.0
+    image: yunfan-digital-human:2.6.0
     container_name: paas-experience
     ports:
       - "8080:8080"
