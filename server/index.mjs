@@ -34,6 +34,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
   '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.json': 'application/json; charset=utf-8', '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', // 站内上传的文档素材（/media/ 供平台拉取）
 };
 const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.svg', '.json']);
 // 业务失败统一 HTTP 200 + code≠0；只有接口不存在 / 请求体过大 / 未登录 / 服务端异常使用 HTTP 错误码
@@ -260,10 +261,16 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         return registerTask(taskId, 'video');
       }
       if (cap.id === 'video-image') {
-        if (!/^https?:\/\//.test(params.imageUrl || '') || !/^https?:\/\//.test(params.audioUrl || '')) throw E.validation('真实环境需要填写可公网访问的图片和音频地址（http/https）。');
+        // 2.8.0：图片地址留空时自动用服务端默认形象图（与文本驱动视频合成同一张）
+        const img = String(params.imageUrl || '').trim() || rt.vcfg.avatarImageUrl || '';
+        if (!/^https?:\/\//.test(img)) {
+          if (!img) throw fail('AVATAR_NOT_CONFIGURED', '没有可用的数字人形象图片。', '请填写图片地址，或让管理员在「厂商凭据」里配置默认形象图。', 'config');
+          throw E.validation('人像图片地址需为 http(s) 地址；留空时使用服务端默认形象图。');
+        }
+        if (!/^https?:\/\//.test(params.audioUrl || '')) throw E.validation('真实环境需要填写可公网访问的音频地址（http/https）。');
         const duration = normalizeDuration(params.duration);
         await assertVendorQuota(client, 'genImageVideoDuration', duration, '图片数字人');
-        const taskId = await client.createImageAvatar({ imageUrl: params.imageUrl, audioUrl: params.audioUrl, duration, videoName: String(params.prompt || cap.name).slice(0, 40) });
+        const taskId = await client.createImageAvatar({ imageUrl: img, audioUrl: params.audioUrl, duration, videoName: String(params.prompt || cap.name).slice(0, 40) });
         return registerTask(taskId, 'video');
       }
       if (cap.id === 'voice-tts') {
@@ -311,7 +318,8 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         const modelUrl = String(params.modelUrl || cfg.avatarModelUrl || '').trim();
         if (faceFeatureId && modelUrl) {
           await assertVendorQuota(client, 'genVideoDuration', 1, '视频合成');
-          const body = buildVideoCreateParam(params, { qid });
+          // 2.8.0：把服务端已配置的形象值（cfg 回落）也传进请求体，否则留空表单 + 已配置服务端时会抛错
+          const body = buildVideoCreateParam({ ...params, faceFeatureId, modelUrl }, { qid });
           const taskId = await client.createVideoTask(body);
           return registerTask(taskId, 'video');
         }
@@ -440,6 +448,10 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       appIdMasked: v ? maskValue(v.appId) : '未配置',
       allowBillable: !!a.canBill,
       ttsConfigured: !!v?.ttsQid, avatarImageConfigured: !!v?.avatarImageUrl, llmConfigured: !!cfg.deepseekKey,
+      // 2.8.0：服务端已配置的前置资源状态，供体验页表单直接显示（布尔值与公开图片地址，不含密钥）
+      avatarImageUrl: v?.avatarImageUrl || '',
+      faceFeatureConfigured: !!cfg.faceFeatureId, avatarModelConfigured: !!cfg.avatarModelUrl,
+      liveAvatarConfigured: !!(cfg.liveFaceFeatureId && cfg.liveFileId),
       vendorManaged: a.kind === 'tenant',
     };
   }

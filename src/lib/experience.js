@@ -2,6 +2,7 @@
 import { groupOf, OUTPUT_LABEL, capById } from './capabilities.js';
 import { esc } from './html.js';
 import { errorBlock } from './views.js';
+import { recentForField } from './recent.js';
 
 /** 上传按钮的文件选择器过滤（与服务端 media.mjs 白名单一致；服务端是最终校验） */
 const UPLOAD_ACCEPT = {
@@ -9,6 +10,7 @@ const UPLOAD_ACCEPT = {
   audio: 'audio/mpeg,audio/wav,audio/mp4,audio/aac,.mp3,.wav,.m4a,.aac',
   video: 'video/mp4,video/quicktime,.mp4,.mov',
   media: 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,.mp4,.mov',
+  doc: 'text/plain,text/markdown,.txt,.md',
 };
 
 /**
@@ -31,13 +33,21 @@ function nextStepsHtml(r, cap) {
   return `<div class="actions next-steps"><span class="muted">下一步：</span>${steps.map((s) => `<button class="btn btn--primary btn--sm" type="button" data-action="exp-next" data-cap="${esc(s.cap)}">${esc(s.label)}</button>`).join('')}</div>`;
 }
 
-function requiresCard(ex) {
+/** 前置条件里带 config 的那条：显示服务端配置状态（已配置 / 未配置）；配置没读到时不显示 */
+function configStatus(cfg, key) {
+  if (!key || !cfg) return '';
+  return cfg[key]
+    ? '<span class="pill pill--ok">服务端已配置</span>'
+    : '<span class="pill pill--lock">未配置</span>';
+}
+
+function requiresCard(ex, cfg) {
   const reqs = ex.requires || [];
   if (!reqs.length) return '';
   return `<div class="card"><div class="card__title"><h2>开始之前</h2><span class="pill pill--info">按顺序准备，不容易跑一半失败</span></div>
     <ol class="req-list">${reqs.map((rq) => {
       const target = rq.cap ? capById(rq.cap) : null;
-      return `<li><b>${esc(rq.text)}</b>${rq.note ? `<span class="muted"> ${esc(rq.note)}</span>` : ''}${target ? ` <a class="btn btn--sm" href="#experience/${esc(target.id)}" data-view="experience">去${esc(target.name)}</a>` : ''}</li>`;
+      return `<li><b>${esc(rq.text)}</b>${configStatus(cfg, rq.config)}${rq.note ? `<span class="muted"> ${esc(rq.note)}</span>` : ''}${target ? ` <a class="btn btn--sm" href="#experience/${esc(target.id)}" data-view="experience">去${esc(target.name)}</a>` : ''}</li>`;
     }).join('')}</ol></div>`;
 }
 
@@ -57,12 +67,20 @@ export function experienceView(s, cap) {
     // 可上传的 URL 字段：右侧放「上传文件」，传完自动填入本站地址
     const upload = f.upload ? `<button class="btn btn--sm" type="button" data-action="exp-upload" data-field="${esc(f.key)}" data-kind="${esc(f.upload)}" ${busy ? 'disabled' : ''}>上传文件</button><input type="file" class="sr-only" data-upload-field="${esc(f.key)}" data-kind="${esc(f.upload)}" accept="${esc(UPLOAD_ACCEPT[f.upload] || '')}" tabindex="-1" />` : '';
     const row = upload ? `<div class="exp-field-row">${control}${upload}</div>` : control;
-    return `<div class="form-field"><label for="${id}">${esc(f.label)}</label>${row}${f.hint ? `<small class="field-hint" id="${id}-hint">${esc(f.hint)}</small>` : ''}</div>`;
+    // 上次的结果：字段空着时一键填入（上次合成的音频 / 上次训好的形象）
+    const recent = recentForField(f.key, s.recent || {});
+    const recentChip = recent && !String(val).trim()
+      ? `<button class="btn btn--sm btn--ghost" type="button" data-action="exp-recent" data-field="${esc(f.key)}" data-value="${esc(recent.value)}" ${busy ? 'disabled' : ''}>${esc(recent.label)}</button>` : '';
+    // 图片数字人：服务端有默认形象图时，显示缩略图并可一键填入
+    const defaultAvatar = cap.id === 'video-image' && f.key === 'imageUrl' && s.config?.avatarImageUrl
+      ? `<span class="default-avatar"><img src="${esc(s.config.avatarImageUrl)}" class="default-avatar-thumb" alt="服务端默认形象图" /><button class="btn btn--sm btn--ghost" type="button" data-action="exp-default-avatar" data-field="imageUrl" data-value="${esc(s.config.avatarImageUrl)}" ${busy ? 'disabled' : ''}>使用默认形象图</button></span>` : '';
+    const extras = [recentChip, defaultAvatar].filter(Boolean).join('');
+    return `<div class="form-field"><label for="${id}">${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${f.hint ? `<small class="field-hint" id="${id}-hint">${esc(f.hint)}</small>` : ''}</div>`;
   }).join('');
 
   return `<div class="console exp-shell">
     <nav class="exp-crumb" aria-label="位置"><a href="#catalog" data-view="catalog">能力目录</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
-    ${requiresCard(ex)}
+    ${requiresCard(ex, s.config)}
     <div class="grid-2 exp-grid">
       <div class="card"><div class="card__title"><h2>填写参数</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>
         <div class="form-grid">${fields}</div>
@@ -111,8 +129,13 @@ export function experienceResult(r, cap) {
     body = `<img src="${esc(r.imageUrl)}" alt="${esc(r.title || '生成的图片')}（${r.mode === 'real' ? '平台生成' : '演示样例图'}）" class="media-image" />
       <div class="actions"><a class="btn" href="${esc(r.imageUrl)}" download>下载图片</a>${save}</div>`;
   } else if (out === 'json') {
+    // 音色复刻：真实环境的 QID 可一键复制，并说明怎么用上
+    const qidCopy = cap.id === 'voice-clone' && r.mode === 'real' && r.json?.qid
+      ? `<button class="btn" type="button" data-action="exp-copy-qid" data-qid="${esc(r.json.qid)}">复制 QID</button>` : '';
+    const qidNote = cap.id === 'voice-clone' && r.mode === 'real' && r.json?.qid
+      ? '<p class="field-hint">把这个 QID 发给管理员配到服务端，语音合成就能用这个音色。</p>' : '';
     body = `<pre class="json-block" tabindex="0" aria-label="JSON 结果">${esc(r.jsonText || JSON.stringify(r.json, null, 2))}</pre>
-      <div class="actions"><button class="btn" type="button" data-action="exp-copy">复制 JSON</button>${save}</div>`;
+      ${qidNote}<div class="actions"><button class="btn" type="button" data-action="exp-copy">复制 JSON</button>${qidCopy}${save}</div>`;
   } else {
     body = `<div class="text-result">${esc(r.text || '')}</div>
       <div class="actions"><button class="btn" type="button" data-action="exp-copy">复制文本</button>${save}</div>`;

@@ -16,6 +16,8 @@ export const MEDIA_KINDS = {
   video: { label: '视频', exts: ['.mp4', '.mov'], maxBytes: 100 * 1024 * 1024, accept: 'video/mp4,video/quicktime,.mp4,.mov' },
   // 绿幕预览：图片或视频都行
   media: { label: '图片或视频', exts: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov'], maxBytes: 100 * 1024 * 1024, accept: 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,.mp4,.mov' },
+  // 知识库资料：txt/md 文档（与知识库管理的文件上限一致，2MB；纯文本不验文件头）
+  doc: { label: '文档', exts: ['.txt', '.md'], maxBytes: 2 * 1024 * 1024, accept: 'text/plain,text/markdown,.txt,.md' },
 };
 
 export const mediaDir = (kbDir) => path.join(kbDir, 'media');

@@ -11,6 +11,7 @@ import { capById } from './lib/capabilities.js';
 import { words } from './lib/html.js';
 import * as V from './lib/views.js';
 import { experienceView, NEXT_STEPS } from './lib/experience.js';
+import { loadRecent, saveRecent, extractRecent } from './lib/recent.js';
 import { initialAdminState, parseAdminHash, renderAdminRoute, ADMIN_ROUTES, credentialDialog, createAdminController } from './lib/admin.js';
 
 const SAMPLE_TEXT = '新款智能手表今天上市，支持全天心率监测、睡眠分析与运动记录，轻巧续航七天，欢迎到店体验。';
@@ -30,6 +31,7 @@ const state = {
   chat: { messages: [], input: '', streaming: false, abort: null, lastQuestion: '' },
   exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null },
   expPrefill: null, // 「下一步」带入的参数：跳到目标能力时一次性填入（applyRoute 里消费）
+  recent: loadRecent(), // 上次的结果（本机）：上次合成的音频 / 上次训好的形象 / 上次复刻的 QID
   token: { loading: false, data: null, error: null },
   works: listWorks(), worksError: null, localWorkCount: 0,
   dialog: null,
@@ -350,7 +352,7 @@ async function runVoice() {
   if (!check.ok) { v.inputError = check.message; return render(); }
   Object.assign(v, { busy: true, inputError: '', error: null, result: null });
   render();
-  try { v.result = await api.tts(v.text, 'voice'); } catch (e) { v.error = toApiError(e); }
+  try { v.result = await api.tts(v.text, 'voice'); if (state.mode === 'real' && v.result?.audio_url) state.recent = saveRecent({ audioUrl: v.result.audio_url }); } catch (e) { v.error = toApiError(e); }
   v.busy = false; renderIf('create', 'voice');
 }
 
@@ -461,6 +463,7 @@ async function runExperience() {
     if (r.sync) { e.result = r.result; }
     else { e.taskId = r.taskId; rememberTaskId(e.taskId, 'experience'); e.result = await pollExperience(); }
     e.running = false;
+    rememberResult(cap.id, e.result);
     const expAutoSaved = await autoSaveExperience();
     if (state.view === 'experience') { render(); document.getElementById('exp-result-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
     if (expAutoSaved) toast('已自动保存到我的作品');
@@ -493,7 +496,13 @@ async function resumeExperience() {
   Object.assign(e, { running: true, error: null, startedAt: Date.now() });
   render(); startTicker();
   try { e.result = await pollExperience(); } catch (err) { e.error = err?.name === 'AbortError' ? null : toApiError(err); }
-  e.running = false; renderIf('experience');
+  e.running = false; rememberResult(e.capId, e.result); renderIf('experience');
+}
+
+/** 记住这次的结果（只记真实环境）：下次进表单一点就能填上 */
+function rememberResult(capId, result) {
+  const patch = extractRecent(capId, result);
+  if (patch) state.recent = saveRecent(patch);
 }
 
 /** 任务完成自动保存：只存真实环境的媒体结果，演示样例不自动进作品。
@@ -686,6 +695,22 @@ const actions = {
   'exp-reset': () => { state.exp.params = {}; state.exp.error = null; render(); },
   'exp-save': saveExperience,
   'exp-copy': copyExperience,
+  'exp-recent': (el) => {
+    const field = el.dataset.field; const value = el.dataset.value || '';
+    if (!field || !value) return;
+    state.exp.params[field] = value; render(); toast('已填入上次的结果');
+  },
+  'exp-copy-qid': (el) => {
+    const qid = el.dataset.qid || '';
+    if (!qid) return;
+    if (!navigator.clipboard?.writeText) return toast('当前浏览器不支持自动复制，请手动选择 QID 复制');
+    navigator.clipboard.writeText(qid).then(() => toast('QID 已复制'), () => toast('复制失败，请手动选择 QID 复制'));
+  },
+  'exp-default-avatar': (el) => {
+    const field = el.dataset.field; const value = el.dataset.value || '';
+    if (!field || !value) return;
+    state.exp.params[field] = value; render(); toast('已填入默认形象图');
+  },
   'exp-next': (el) => {
     const step = (NEXT_STEPS[state.exp.capId] || []).find((x) => x.cap === el.dataset.cap);
     if (!step) return;

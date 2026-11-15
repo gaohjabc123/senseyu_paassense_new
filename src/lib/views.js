@@ -165,16 +165,24 @@ export function homeView(s) {
   </div>`;
 }
 
+/** 能力矩阵「需要准备」列：每项能力的前置条件，一眼看出要先准备什么 */
+function needsHtml(c) {
+  const reqs = c.experience?.requires || [];
+  if (!reqs.length) return '—';
+  return reqs.map((r) => esc(r.text)).join('<br>');
+}
+
 function capTable(list, s) {
   return `<div class="table-scroll"><table class="table cap-table">
     <caption class="sr-only">能力列表</caption>
-    <thead><tr><th scope="col">能力</th><th scope="col">所属</th><th scope="col">说明 / 场景</th><th scope="col">输出</th><th scope="col">接口</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead>
+    <thead><tr><th scope="col">能力</th><th scope="col">所属</th><th scope="col">说明 / 场景</th><th scope="col">输出</th><th scope="col">接口</th><th scope="col">需要准备</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead>
     <tbody>${list.map((c) => `<tr>
       <td data-label="能力"><b>${esc(c.name)}</b>${c.tag ? `<span class="tag">${esc(c.tag)}</span>` : ''}</td>
       <td data-label="所属">${esc(groupOf(c.group)?.name ?? '')}</td>
       <td data-label="说明"><span class="muted">${esc(c.desc)}</span><small class="cell-scene">${esc(c.scene)}</small></td>
       <td data-label="输出"><span class="status st-ready">${OUTPUT_LABEL[c.experience?.output] || '文本'}</span></td>
       <td data-label="接口"><code class="code-sm">${esc(c.api)}</code></td>
+      <td data-label="需要准备"><small class="cell-needs">${needsHtml(c)}</small></td>
       <td>${canUse(s, c.id) ? `<button class="btn btn--sm btn--primary" type="button" data-use="${c.id}" aria-label="体验${esc(c.name)}">体验</button>` : `<span class="pill pill--lock" title="你的企业未开通这项能力">未开通</span>`}</td>
     </tr>`).join('')}</tbody></table></div>`;
 }
@@ -191,7 +199,7 @@ export function capabilitiesView(s) {
   const list = filter === 'all' ? CAPABILITIES : CAPABILITIES.filter((c) => c.group === filter);
   return `<div class="site site--inner">
     <div class="page-head"><h1>能力矩阵</h1>
-      <p>平台全部能力的索引：所属大类、输出类型与对应接口。每一项都可以在工作台在线体验。</p></div>
+      <p>平台全部能力的索引：所属大类、输出类型、对应接口与需要准备的东西。每一项都可以在工作台在线体验。</p></div>
     <div class="page-body">${filterRow(filter)}${capTable(list, s)}
     <p class="hint-block">能力口径依据如影平台官方产品文档整理。演示环境返回本地样例，真实环境的可用范围以你的平台账号开通情况为准。</p></div>
   </div>`;

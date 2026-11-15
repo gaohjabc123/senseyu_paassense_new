@@ -65,6 +65,23 @@ test('音频不验文件头，扩展名对就能传', async () => {
   assert.match(r.data.url, /\.mp3$/);
 });
 
+test('文档上传：txt/md 能传并以 text/plain 公开访问，pdf 拒绝，超过 2MB 返回 413', async () => {
+  const txt = await rawUpload({ name: 'guide.md', kind: 'doc', body: Buffer.from('# 使用说明\n\n图片数字人视频最短 5 秒。\n'), cookie: sup.cookie });
+  assert.equal(txt.code, 0, txt.message || '');
+  assert.match(txt.data.url, /\.md$/);
+  const got = await fetch(`${s.base}/${txt.data.url}`);
+  assert.equal(got.status, 200);
+  assert.match(got.headers.get('content-type'), /text\/plain/);
+  assert.match(await got.text(), /最短 5 秒/);
+  const pdf = await rawUpload({ name: 'manual.pdf', kind: 'doc', body: Buffer.from('%PDF-1.4 fake'), cookie: sup.cookie });
+  assert.equal(pdf.code, 'INVALID_INPUT');
+  assert.match(pdf.message, /不支持的文件类型/);
+  const big = Buffer.alloc(2 * 1024 * 1024 + 1, 0);
+  const over = await rawUpload({ name: 'big.txt', kind: 'doc', body: big, cookie: sup.cookie });
+  assert.equal(over.status, 413);
+  assert.equal(over.code, 'PAYLOAD_TOO_LARGE');
+});
+
 test('超过单文件上限返回 413', async () => {
   const big = Buffer.alloc(10 * 1024 * 1024 + 1, 0);
   const r = await rawUpload({ name: 'big.png', kind: 'image', body: big, cookie: sup.cookie });

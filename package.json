@@ -1,6 +1,6 @@
 {
   "name": "ruying-ai-platform",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": true,
   "type": "module",
   "description": "如影 AI 能力开放平台 —— 商予科技数字人 PaaS 能力门户（官网 + 工作台，演示/真实双模式）",

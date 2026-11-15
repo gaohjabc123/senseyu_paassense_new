@@ -5,7 +5,9 @@
 // 每项 experience 规格：
 //   fields[]   输入控件 { key, label, type, placeholder, default, options, hint, upload }
 //              upload：该字段可点「上传」直接传本站文件（image | audio | video | media），传完自动填入地址
-//   requires[] 前置条件 { text, cap?, note? }：cap 是产出它的能力 id，渲染「去生成」直达链接；note 是获取办法
+//   requires[] 前置条件 { text, cap?, note?, config? }：cap 是产出它的能力 id，渲染「去生成」直达链接；note 是获取办法；
+//              config 是服务端配置状态的键名（见 /api/config：ttsConfigured / avatarImageConfigured /
+//              faceFeatureConfigured / avatarModelConfigured / liveAvatarConfigured），有值时在条目前显示「服务端已配置 / 未配置」
 //   output     结果类型 video | audio | image | json | text | chat
 //   submit     提交按钮文案
 //   notes      体验提示（真实模式的前置条件等）
@@ -32,6 +34,10 @@ export const CAPABILITIES = [
     realApi: '/api/2dvh/v1/material/video/create', billable: true,
     experience: {
       output: 'video', submit: '生成视频',
+      requires: [
+        { text: '配音音色（QID）', config: 'ttsConfigured', note: '服务端已配置，直接合成；换音色找管理员' },
+        { text: '默认形象图', config: 'avatarImageConfigured', note: '服务端已配置，直接生成；换图找管理员' },
+      ],
       fields: [
         { key: 'text', label: '口播文案', type: 'textarea', default: '新款智能手表今天上市，支持全天心率监测与运动记录，欢迎了解。', placeholder: '输入要播报的文字…', hint: '4～200 字，字数决定视频时长' },
       ],
@@ -47,12 +53,12 @@ export const CAPABILITIES = [
     experience: {
       output: 'video', submit: '生成数字人视频',
       requires: [
-        { text: '人像照片（可公网访问的图片地址）', note: '点表单右侧「上传」可直接传本站图片' },
+        { text: '人像照片（可公网访问的图片地址）', config: 'avatarImageConfigured', note: '留空用服务端默认形象图；点表单右侧「上传」可直接传本站图片' },
         { text: '配音音频地址', cap: 'voice-tts', note: '先去语音合成生成，或上传自己的录音' },
         { text: '图片数字人额度 ≥ 视频时长', note: '剩余额度见工作台「我的额度」，不足时会报明确的错' },
       ],
       fields: [
-        { key: 'imageUrl', label: '人像图片地址', type: 'text', default: '', placeholder: 'https://…/portrait.png', upload: 'image', hint: '真实环境必填；点右侧「上传」可直接传本站图片，或填可公网访问的图片地址' },
+        { key: 'imageUrl', label: '人像图片地址', type: 'text', default: '', placeholder: 'https://…/portrait.png', upload: 'image', hint: '留空使用服务端默认形象图；也可点右侧「上传」传自己的照片，或填可公网访问的图片地址' },
         { key: 'audioUrl', label: '音频地址', type: 'text', default: '', placeholder: 'https://…/voice.mp3', upload: 'audio', hint: '真实环境必填；先去「语音合成」生成，或点右侧「上传」传自己的录音' },
         { key: 'prompt', label: '视频名称', type: 'text', default: '图片数字人示例' },
         { key: 'duration', label: '时长（秒）', type: 'number', default: '10', hint: '整数秒，至少 5 秒' },
@@ -69,8 +75,8 @@ export const CAPABILITIES = [
     experience: {
       output: 'json', submit: '生成脚本 JSON',
       requires: [
-        { text: '形象 face_feature_id', cap: 'avatar-train', note: '先去形象复刻训一个形象，完成后得到' },
-        { text: '形象 zip 包地址', cap: 'avatar-train', note: '训练完成后，在平台控制台的形象详情里复制模型文件地址' },
+        { text: '形象 face_feature_id', cap: 'avatar-train', config: 'faceFeatureConfigured', note: '服务端已配置时留空即可；想用自己的形象先去形象复刻训一个' },
+        { text: '形象 zip 包地址', cap: 'avatar-train', config: 'avatarModelConfigured', note: '服务端已配置时留空即可；否则在平台控制台的形象详情里复制模型文件地址' },
         { text: '台词至少 10 个字', note: '不填形象也能只生成脚本 JSON，不提交' },
       ],
       fields: [
@@ -78,8 +84,8 @@ export const CAPABILITIES = [
         { key: 'lines', label: '台词内容', type: 'textarea', default: '大家好，欢迎来到本章课程。', hint: '提交到平台生成时，台词至少 10 个字' },
         { key: 'subtitle', label: '字幕样式', type: 'select', default: '底部白字', options: [['底部白字', '底部白字'], ['无字幕', '无字幕'], ['顶部标题', '顶部标题']] },
         { key: 'videoName', label: '视频名称（提交生成时用）', type: 'text', default: '第3章-高级效果', hint: '只传台词不提交时可留空' },
-        { key: 'faceFeatureId', label: '形象 face_feature_id（提交生成时必填）', type: 'text', default: '', placeholder: '训练完成后在平台控制台查看' },
-        { key: 'modelUrl', label: '形象 zip 包地址（提交生成时必填）', type: 'text', default: '', placeholder: 'https://…/avatar.zip', hint: '训练完成后，在平台控制台的形象详情里复制模型文件地址' },
+        { key: 'faceFeatureId', label: '形象 face_feature_id（提交生成时用）', type: 'text', default: '', placeholder: '训练完成后在平台控制台查看', hint: '服务端已配置时留空即可；填自己训好的形象可覆盖' },
+        { key: 'modelUrl', label: '形象 zip 包地址（提交生成时用）', type: 'text', default: '', placeholder: 'https://…/avatar.zip', hint: '服务端已配置时留空即可；否则在平台控制台的形象详情里复制模型文件地址' },
       ],
       notes: '输出的是可直接传给视频合成接口的 param 结构（版本 0.0.17），不单独计费；填了形象 face_feature_id 与 zip 包地址时，真实模式会把这份脚本提交到平台生成视频。',
       mockTitle: '视频脚本 param 结构',
@@ -95,6 +101,9 @@ export const CAPABILITIES = [
     realApi: '/api/voice/v3/tts/request', billable: false,
     experience: {
       output: 'audio', submit: '合成语音',
+      requires: [
+        { text: '配音音色（QID）', config: 'ttsConfigured', note: '服务端已配置，直接合成；换音色找管理员' },
+      ],
       fields: [
         { key: 'text', label: '合成文本', type: 'textarea', default: '大家好，欢迎使用如影 AI 能力开放平台。', hint: '4～200 字' },
       ],
@@ -250,11 +259,11 @@ export const CAPABILITIES = [
     experience: {
       output: 'json', submit: '创建知识库',
       requires: [
-        { text: '资料文档（txt/md）', note: '也可以直接去工作台「知识库管理」上传文件，不用填地址' },
+        { text: '资料文档（txt/md）', note: '点表单右侧「上传」可直接传本站文档，也可以直接去工作台「知识库管理」上传文件，不用填地址' },
       ],
       fields: [
         { key: 'name', label: '知识库名称', type: 'text', default: '人工智能通识' },
-        { key: 'docUrl', label: '资料文档 URL', type: 'text', default: 'https://cdn.example.com/course.pdf', hint: '仅支持 txt/md；也可以直接去工作台「知识库管理」上传文件，不用填地址' },
+        { key: 'docUrl', label: '资料文档 URL', type: 'text', default: 'https://cdn.example.com/course.pdf', upload: 'doc', hint: '仅支持 txt/md；点右侧「上传」可直接传本站文档，或填可公网访问的文档地址' },
         { key: 'desc', label: '知识库说明', type: 'textarea', default: '面向学生的课程答疑资料' },
       ],
       notes: '平台没有知识库接口；真实模式把资料地址的文档（txt/md）下载后存进服务端自建知识库，供问答调用。',
@@ -289,7 +298,7 @@ export const CAPABILITIES = [
     experience: {
       output: 'json', submit: '创建直播间',
       requires: [
-        { text: '已训练并预热的数字人形象', cap: 'avatar-train', note: '先训形象；预热与形象配置由管理员在服务端完成' },
+        { text: '已训练并预热的数字人形象', cap: 'avatar-train', config: 'liveAvatarConfigured', note: '先训形象；预热与形象配置由管理员在服务端完成' },
         { text: '创建即开始计时', note: '只建不开播，不推流；开播前确认脚本已备好' },
       ],
       fields: [
@@ -310,7 +319,7 @@ export const CAPABILITIES = [
     experience: {
       output: 'json', submit: '创建直播间（演示）',
       requires: [
-        { text: '已训练并预热的数字人形象', cap: 'avatar-train', note: '先训形象；预热与形象配置由管理员在服务端完成' },
+        { text: '已训练并预热的数字人形象', cap: 'avatar-train', config: 'liveAvatarConfigured', note: '先训形象；预热与形象配置由管理员在服务端完成' },
         { text: '创建即开始计时', note: '只建不开播，不推流；开播后每 60 秒需心跳，关播须调接口，否则占用路数' },
       ],
       fields: [

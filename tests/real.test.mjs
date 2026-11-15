@@ -443,3 +443,68 @@ test('直播未配置形象时报前置条件（不依赖平台）', async () =>
     assert.ok(r.hint);
   } finally { await bare.close(); }
 });
+
+/* ---------- 2.8.0 操作流程：自动获取 ---------- */
+
+test('图片数字人：图片地址留空时用服务端默认形象图', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'video-image', params: { imageUrl: '', audioUrl: 'https://cdn.invalid/a.mp3', duration: 6 } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  const create = calls.find((x) => x.path === '/api/2dvh/v1/material/single/image/video/create');
+  assert.ok(create, '应提交到平台');
+  assert.deepEqual(JSON.parse(create.body.param), { imageUrl: 'https://cdn.invalid/p.png', audioUrl: 'https://cdn.invalid/a.mp3', duration: 6 });
+});
+
+test('图片数字人：没配默认形象图且图片留空时报明确的错', async () => {
+  const noImg = await startServer({ fetchImpl: fakeFetch, env: { ...SUPER, RUYING_MOCK: 'false', RUYING_APP_ID: 'test-app', RUYING_APP_KEY: 'fake-key', RUYING_BASE_URL: 'https://ruying.invalid', RUYING_TTS_QID: 'qid-test', ALLOW_BILLABLE: 'true' } });
+  try {
+    const ns = await superClient(noImg);
+    const nt = await setupTenant(noImg, ns, { modules: ALL, allowReal: true, allowBillable: true, vendorId: 'env' });
+    await fund(ns, nt.tenant.id);
+    const r = await nt.admin.post('/api/capability/run', { id: 'video-image', params: { imageUrl: '', audioUrl: 'https://cdn.invalid/a.mp3', duration: 6 } }, 'real');
+    assert.equal(r.code, 'AVATAR_NOT_CONFIGURED');
+    assert.equal(r.action, 'config');
+    assert.ok(r.hint);
+  } finally { await noImg.close(); }
+});
+
+test('视频脚本：服务端已配置形象时，表单留空也能提交（不再因请求体缺值抛错）', async () => {
+  const withAvatar = await startServer({ fetchImpl: fakeFetch, env: { ...SUPER,
+    RUYING_MOCK: 'false', RUYING_APP_ID: 'test-app', RUYING_APP_KEY: 'fake-key', RUYING_BASE_URL: 'https://ruying.invalid',
+    RUYING_TTS_QID: 'qid-test', RUYING_AVATAR_IMAGE_URL: 'https://cdn.invalid/p.png', ALLOW_BILLABLE: 'true',
+    RUYING_FACE_FEATURE_ID: 'ff_env_1', RUYING_AVATAR_MODEL_URL: 'https://cdn.invalid/avatar.zip',
+    DEEPSEEK_API_KEY: 'fake-ds', DEEPSEEK_BASE_URL: 'https://deepseek.invalid',
+  } });
+  try {
+    const ws = await superClient(withAvatar);
+    const wt = await setupTenant(withAvatar, ws, { modules: ALL, allowReal: true, allowBillable: true, vendorId: 'env' });
+    await fund(ws, wt.tenant.id);
+    calls.length = 0;
+    const r = await wt.admin.post('/api/capability/run', { id: 'video-script', params: {
+      name: '第3章', lines: '大家好，欢迎来到本章课程。', subtitle: '底部白字', videoName: '第3章-高级效果',
+    } }, 'real');
+    assert.equal(r.code, 0, r.message);
+    assert.equal(r.data.sync, false, '服务端已配置形象时应提交并返回异步任务');
+    const req = calls.find((c) => c.path === '/api/2dvh/v1/material/video/create');
+    assert.ok(req, '应提交到平台');
+    const param = JSON.parse(req.body.param);
+    assert.equal(param.digital_role.face_feature_id, 'ff_env_1', '应把服务端配置的形象带进请求体');
+    assert.equal(param.digital_role.url, 'https://cdn.invalid/avatar.zip');
+    // /api/config 应如实反映这三项的配置状态
+    const cfg = await wt.admin.get('/api/config', 'real');
+    assert.equal(cfg.data.faceFeatureConfigured, true);
+    assert.equal(cfg.data.avatarModelConfigured, true);
+    assert.equal(cfg.data.liveAvatarConfigured, false);
+  } finally { await withAvatar.close(); }
+});
+
+test('配置状态：/api/config 返回前置资源的配置情况与默认形象图地址', async () => {
+  const c = await s.get('/api/config', 'real');
+  assert.equal(c.data.ttsConfigured, true);
+  assert.equal(c.data.avatarImageConfigured, true);
+  assert.equal(c.data.avatarImageUrl, 'https://cdn.invalid/p.png');
+  assert.equal(c.data.faceFeatureConfigured, false, '主测试服务器未配 RUYING_FACE_FEATURE_ID');
+  assert.equal(c.data.avatarModelConfigured, false);
+  assert.equal(c.data.liveAvatarConfigured, true, '主测试服务器配了直播形象与预热素材');
+  assert.ok(!JSON.stringify(c.data).includes('fake-key'), '配置接口不得泄露 APP_KEY');
+});

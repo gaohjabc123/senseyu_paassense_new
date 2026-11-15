@@ -37,6 +37,30 @@ test('上传字段的类型都在服务端白名单里', async () => {
   assert.ok(count >= 6, `可上传字段只有 ${count} 个，预期至少 6 个`);
 });
 
+test('前置条件的服务端配置状态：config 键名都在 /api/config 的返回字段里', () => {
+  const KNOWN_CONFIG_KEYS = ['ttsConfigured', 'avatarImageConfigured', 'faceFeatureConfigured', 'avatarModelConfigured', 'liveAvatarConfigured', 'llmConfigured'];
+  let count = 0;
+  for (const c of CAPABILITIES) {
+    for (const r of c.experience?.requires || []) {
+      if (!r.config) continue;
+      count += 1;
+      assert.ok(KNOWN_CONFIG_KEYS.includes(r.config), `${c.id} 的前置条件引用了未知的配置键 ${r.config}`);
+    }
+  }
+  assert.ok(count >= 5, `带服务端配置状态的前置条件只有 ${count} 条，预期至少 5 条`);
+});
+
+test('能力矩阵「需要准备」列：有前置条件的都列得出，无前置条件的显示为空', () => {
+  for (const c of CAPABILITIES) {
+    const reqs = c.experience?.requires || [];
+    assert.ok(Array.isArray(reqs), `${c.id} 的 requires 不是数组`);
+    for (const r of reqs) assert.ok(r.text.length > 0, `${c.id} 有空的前置条件`);
+  }
+  const withReqs = CAPABILITIES.filter((c) => (c.experience?.requires || []).length > 0);
+  assert.ok(withReqs.length >= 8, `有前置条件的能力只有 ${withReqs.length} 项，预期至少 8 项`);
+  assert.ok(CAPABILITIES.some((c) => !(c.experience?.requires || []).length), '应至少有一项能力无前置条件（矩阵列显示为空）');
+});
+
 test('下一步链路：来源与目标都存在，参数函数能产出非空值', () => {
   const fakeResults = {
     'voice-tts': { audioUrl: 'https://cdn.invalid/a.mp3' },
