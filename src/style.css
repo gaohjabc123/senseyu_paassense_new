@@ -316,7 +316,10 @@ main:focus { outline: none; }
 .next-steps { margin-top: var(--sp-4); align-items: center; }
 .guided-path { margin-bottom: var(--sp-4); }
 .guided-path .steps-grid { grid-template-columns: repeat(5, 1fr); }
-.guided-path .step-card .btn { margin-top: var(--sp-3); }
+/* 五张卡文案长短不一：卡片纵向排布，按钮 margin-top:auto 顶到底部，都落在同一条线上 */
+.guided-path .step-card { display: flex; flex-direction: column; }
+.guided-path .step-card p { margin-bottom: var(--sp-3); }
+.guided-path .step-card .btn { margin-top: auto; align-self: flex-start; }
 .exp-side .kv-table th { width: 92px; }
 .exp-desc { margin-bottom: var(--sp-4); font-size: 13px; color: var(--gray-600); line-height: 1.7; }
 .json-block { margin: 0; padding: var(--sp-4); background: var(--gray-900); color: #A5F3FC; border-radius: var(--radius-sm);
