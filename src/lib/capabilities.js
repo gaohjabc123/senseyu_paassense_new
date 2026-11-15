@@ -35,11 +35,11 @@ export const CAPABILITIES = [
     experience: {
       output: 'video', submit: '生成视频',
       requires: [
-        { text: '配音音色（QID）', config: 'ttsConfigured', note: '服务端已配置，直接合成；换音色找管理员' },
-        { text: '默认形象图', config: 'avatarImageConfigured', note: '服务端已配置，直接生成；换图找管理员' },
+        { text: '配音音色（QID）', config: 'ttsConfigured', note: '真实模式：先调 TTS 用这个音色合成语音；服务端已配置，直接合成；换音色找管理员' },
+        { text: '默认形象图', config: 'avatarImageConfigured', note: '真实模式：再用这张图生成图片数字人视频，与创作中心视频口播同一链路；服务端已配置，直接生成；换图找管理员' },
       ],
       fields: [
-        { key: 'text', label: '口播文案', type: 'textarea', default: '新款智能手表今天上市，支持全天心率监测与运动记录，欢迎了解。', placeholder: '输入要播报的文字…', hint: '4～200 字，字数决定视频时长' },
+        { key: 'text', label: '口播文案', type: 'textarea', default: '新款智能手表今天上市，支持全天心率监测与运动记录，欢迎了解。', placeholder: '输入要播报的文字…', hint: '4～200 字，字数决定视频时长；演示环境返回本地样例视频' },
       ],
       notes: '真实模式先调 TTS 合成语音，再用默认形象图生成图片数字人视频（与创作中心视频口播同一链路）；演示环境返回本地样例视频。',
       mockTitle: '数字人口播成片',
