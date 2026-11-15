@@ -3,12 +3,15 @@
 // 前端 import 渲染表单/矩阵，服务端 import 生成结果；禁止在别处另写一份清单。
 //
 // 每项 experience 规格：
-//   fields[]   输入控件 { key, label, type, placeholder, default, options, hint }
+//   fields[]   输入控件 { key, label, type, placeholder, default, options, hint, upload }
+//              upload：该字段可点「上传」直接传本站文件（image | audio | video | media），传完自动填入地址
+//   requires[] 前置条件 { text, cap?, note? }：cap 是产出它的能力 id，渲染「去生成」直达链接；note 是获取办法
 //   output     结果类型 video | audio | image | json | text | chat
 //   submit     提交按钮文案
 //   notes      体验提示（真实模式的前置条件等）
 //   mockJson   json 类结果的模拟回执
 //   mockText   text 类结果的模拟文本
+// GUIDED_PATH：推荐上手顺序（第一次用按这个顺序走，每步都是可点的能力）
 // realApi / billable：真实模式转发用；realApi 为 null 表示该能力需前置资源，不直接转发。
 
 export const GROUPS = [
@@ -43,9 +46,14 @@ export const CAPABILITIES = [
     realApi: '/api/2dvh/v1/material/single/image/video/create', billable: true,
     experience: {
       output: 'video', submit: '生成数字人视频',
+      requires: [
+        { text: '人像照片（可公网访问的图片地址）', note: '点表单右侧「上传」可直接传本站图片' },
+        { text: '配音音频地址', cap: 'voice-tts', note: '先去语音合成生成，或上传自己的录音' },
+        { text: '图片数字人额度 ≥ 视频时长', note: '剩余额度见工作台「我的额度」，不足时会报明确的错' },
+      ],
       fields: [
-        { key: 'imageUrl', label: '人像图片地址', type: 'text', default: '', placeholder: 'https://…/portrait.png', hint: '真实环境必填，需可公网访问；演示环境可留空' },
-        { key: 'audioUrl', label: '音频地址', type: 'text', default: '', placeholder: 'https://…/voice.mp3', hint: '真实环境必填，需可公网访问；演示环境可留空' },
+        { key: 'imageUrl', label: '人像图片地址', type: 'text', default: '', placeholder: 'https://…/portrait.png', upload: 'image', hint: '真实环境必填；点右侧「上传」可直接传本站图片，或填可公网访问的图片地址' },
+        { key: 'audioUrl', label: '音频地址', type: 'text', default: '', placeholder: 'https://…/voice.mp3', upload: 'audio', hint: '真实环境必填；先去「语音合成」生成，或点右侧「上传」传自己的录音' },
         { key: 'prompt', label: '视频名称', type: 'text', default: '图片数字人示例' },
         { key: 'duration', label: '时长（秒）', type: 'number', default: '10', hint: '整数秒，至少 5 秒' },
       ],
@@ -60,13 +68,18 @@ export const CAPABILITIES = [
     realApi: null, billable: false,
     experience: {
       output: 'json', submit: '生成脚本 JSON',
+      requires: [
+        { text: '形象 face_feature_id', cap: 'avatar-train', note: '先去形象复刻训一个形象，完成后得到' },
+        { text: '形象 zip 包地址', cap: 'avatar-train', note: '训练完成后，在平台控制台的形象详情里复制模型文件地址' },
+        { text: '台词至少 10 个字', note: '不填形象也能只生成脚本 JSON，不提交' },
+      ],
       fields: [
         { key: 'name', label: '脚本名称', type: 'text', default: '第3章-高级效果' },
         { key: 'lines', label: '台词内容', type: 'textarea', default: '大家好，欢迎来到本章课程。', hint: '提交到平台生成时，台词至少 10 个字' },
         { key: 'subtitle', label: '字幕样式', type: 'select', default: '底部白字', options: [['底部白字', '底部白字'], ['无字幕', '无字幕'], ['顶部标题', '顶部标题']] },
         { key: 'videoName', label: '视频名称（提交生成时用）', type: 'text', default: '第3章-高级效果', hint: '只传台词不提交时可留空' },
         { key: 'faceFeatureId', label: '形象 face_feature_id（提交生成时必填）', type: 'text', default: '', placeholder: '训练完成后在平台控制台查看' },
-        { key: 'modelUrl', label: '形象 zip 包地址（提交生成时必填）', type: 'text', default: '', placeholder: 'https://…/avatar.zip' },
+        { key: 'modelUrl', label: '形象 zip 包地址（提交生成时必填）', type: 'text', default: '', placeholder: 'https://…/avatar.zip', hint: '训练完成后，在平台控制台的形象详情里复制模型文件地址' },
       ],
       notes: '输出的是可直接传给视频合成接口的 param 结构（版本 0.0.17），不单独计费；填了形象 face_feature_id 与 zip 包地址时，真实模式会把这份脚本提交到平台生成视频。',
       mockTitle: '视频脚本 param 结构',
@@ -96,8 +109,12 @@ export const CAPABILITIES = [
     realApi: '/api/2dvh/v1/material/voice/clone/qid/create', billable: true,
     experience: {
       output: 'json', submit: '提交音色训练',
+      requires: [
+        { text: '训练录音：10 秒以上、清晰人声', note: '点表单右侧「上传」可直接传本站音频' },
+        { text: '发言人姓名与公司名称', note: '须与同意音频里的一致，是平台要求的同意声明' },
+      ],
       fields: [
-        { key: 'audioUrl', label: '训练音频 URL', type: 'text', default: '', placeholder: 'https://…/voice-sample.mp3', hint: '支持 wav/mp3/m4a/mp4/mov/aac，建议 10 秒以上、无底噪的清晰人声' },
+        { key: 'audioUrl', label: '训练音频 URL', type: 'text', default: '', placeholder: 'https://…/voice-sample.mp3', upload: 'audio', hint: '支持 wav/mp3/m4a/aac，建议 10 秒以上、无底噪的清晰人声；点右侧「上传」可直接传本站音频' },
         { key: 'audioLanguage', label: '主要语言', type: 'text', default: 'zh-CN', hint: 'BCP 47，如 zh-CN / en-US' },
         { key: 'voiceName', label: '音色名称', type: 'text', default: '品牌播报音', hint: '不超过 64 字符' },
         { key: 'gender', label: '性别', type: 'select', default: '2', options: [['2', '女'], ['1', '男']] },
@@ -137,8 +154,12 @@ export const CAPABILITIES = [
     realApi: '/api/2dvh/v1/material/2davatar/model/multi/create', billable: true,
     experience: {
       output: 'json', submit: '提交形象训练',
+      requires: [
+        { text: '采集视频：时长 ≥6 分钟', note: '绿幕/纯色背景、1080×1920 竖屏、无背景噪音；点右侧「上传」可直接传本站视频' },
+        { text: '1 个人物形象模型额度', note: '剩余额度见工作台「我的额度」' },
+      ],
       fields: [
-        { key: 'videoUrl', label: '采集视频 URL', type: 'text', default: '', placeholder: 'https://…/avatar-source.mp4', hint: '绿幕/纯色背景、1080×1920 竖屏、无背景噪音，时长须 ≥6 分钟' },
+        { key: 'videoUrl', label: '采集视频 URL', type: 'text', default: '', placeholder: 'https://…/avatar-source.mp4', upload: 'video', hint: '绿幕/纯色背景、1080×1920 竖屏、无背景噪音，时长须 ≥6 分钟；点右侧「上传」可直接传本站视频（≤100MB）' },
         { key: 'avatarName', label: '形象名称', type: 'text', default: '张老师数字分身' },
         { key: 'avatarType', label: '训练类型', type: 'select', default: '0', options: [['0', '普通数字人'], ['1', '动静数字人'], ['2', '动作编辑数字人'], ['3', '快速数字人'], ['4', '超级直播间'], ['5', '超级直播间 Pro']] },
         { key: 'segmentStyle', label: '背景分割方式', type: 'select', default: '1', options: [['1', '绿幕分割'], ['0', '不分割'], ['2', '普通分割'], ['3', '绿幕分割后处理']] },
@@ -156,8 +177,11 @@ export const CAPABILITIES = [
     realApi: null, billable: false,
     experience: {
       output: 'image', submit: '生成预览图',
+      requires: [
+        { text: '绿幕图片或视频地址', note: '点右侧「上传」可直接传本站文件；视频须 ≥6 分钟' },
+      ],
       fields: [
-        { key: 'sourceUrl', label: '图片/视频 URL', type: 'text', default: '', placeholder: 'https://…/green-screen.png', hint: '图片走图片预览接口，视频（mp4/mov）走视频预览接口，视频时长须 ≥6 分钟' },
+        { key: 'sourceUrl', label: '图片/视频 URL', type: 'text', default: '', placeholder: 'https://…/green-screen.png', upload: 'media', hint: '图片走图片预览接口，视频（mp4/mov）走视频预览接口，视频时长须 ≥6 分钟；点右侧「上传」可直接传本站文件' },
         { key: 'materialName', label: '任务名称', type: 'text', default: '绿幕预览' },
         { key: 'threshold', label: '高阈值（0-255，视频 70-220）', type: 'number', default: '160' },
         { key: 'blur', label: '边缘模糊核（1-24）', type: 'number', default: '3' },
@@ -175,10 +199,14 @@ export const CAPABILITIES = [
     realApi: null, billable: true,
     experience: {
       output: 'json', submit: '提交模型更新',
+      requires: [
+        { text: '已有形象的模型文件地址', cap: 'avatar-train', note: '先去形象复刻训一个形象，拿到模型文件地址' },
+        { text: '新素材视频', note: '点右侧「上传」可直接传本站视频' },
+      ],
       fields: [
         { key: 'materialName', label: '模型名称', type: 'text', default: '张老师数字分身' },
-        { key: 'videoUrl', label: '新素材视频 URL', type: 'text', default: '', placeholder: 'https://…/new-clip.mp4', hint: '用于更新动作片段的视频' },
-        { key: 'modelUrl', label: '原模型文件地址', type: 'text', default: '', placeholder: 'https://…/model.zip', hint: '已生成的原模型文件下载地址' },
+        { key: 'videoUrl', label: '新素材视频 URL', type: 'text', default: '', placeholder: 'https://…/new-clip.mp4', upload: 'video', hint: '用于更新动作片段的视频；点右侧「上传」可直接传本站视频' },
+        { key: 'modelUrl', label: '原模型文件地址', type: 'text', default: '', placeholder: 'https://…/model.zip', hint: '已生成的原模型文件下载地址，在平台控制台的形象详情里复制' },
         { key: 'avatarType', label: '形象类型', type: 'select', default: '0', options: [['0', '普通数字人'], ['1', '动静数字人'], ['2', '动作编辑数字人'], ['4', '超级直播间'], ['5', '超级直播间 Pro']] },
         { key: 'segmentStyle', label: '背景分割方式', type: 'select', default: '1', options: [['1', '绿幕分割'], ['0', '不分割'], ['2', '普通分割'], ['3', '绿幕分割后处理'], ['4', '自定义 Mask 分割']] },
         { key: 'dynamicRangeStart', label: '动态素材开始时间（秒）', type: 'number', default: '1' },
@@ -198,9 +226,13 @@ export const CAPABILITIES = [
     realApi: '/api/2dvh/v1/material/single/image/edit', billable: true,
     experience: {
       output: 'image', submit: '生成图片',
+      requires: [
+        { text: '1–3 张素材图片地址', note: '点右侧「上传」可直接传本站图片' },
+        { text: 'AI 图片编辑额度已开通', note: '未开通时提交会报明确的错，剩余额度见「我的额度」' },
+      ],
       fields: [
         { key: 'imageName', label: '图片名称', type: 'text', default: 'AI 编辑图片' },
-        { key: 'images', label: '素材图片 URL（每行一个，1~3 张）', type: 'textarea', default: '', placeholder: 'https://…/photo1.jpg', hint: '单张分辨率不超过 2K、文件不超过 10MB' },
+        { key: 'images', label: '素材图片 URL（每行一个，1~3 张）', type: 'textarea', default: '', placeholder: 'https://…/photo1.jpg', upload: 'image', hint: '单张分辨率不超过 2K、文件不超过 10MB；点右侧「上传」可直接传本站图片，地址自动追加到列表' },
         { key: 'prompt', label: '编辑提示词', type: 'textarea', default: '把图一和图二的人物并排放在校园背景中，风格明快' },
         { key: 'watermark', label: 'AI生成 标识', type: 'select', default: '开启', options: [['开启', '开启（合规要求）'], ['关闭', '关闭']] },
       ],
@@ -217,9 +249,12 @@ export const CAPABILITIES = [
     realApi: null, billable: false,
     experience: {
       output: 'json', submit: '创建知识库',
+      requires: [
+        { text: '资料文档（txt/md）', note: '也可以直接去工作台「知识库管理」上传文件，不用填地址' },
+      ],
       fields: [
         { key: 'name', label: '知识库名称', type: 'text', default: '人工智能通识' },
-        { key: 'docUrl', label: '资料文档 URL', type: 'text', default: 'https://cdn.example.com/course.pdf' },
+        { key: 'docUrl', label: '资料文档 URL', type: 'text', default: 'https://cdn.example.com/course.pdf', hint: '仅支持 txt/md；也可以直接去工作台「知识库管理」上传文件，不用填地址' },
         { key: 'desc', label: '知识库说明', type: 'textarea', default: '面向学生的课程答疑资料' },
       ],
       notes: '平台没有知识库接口；真实模式把资料地址的文档（txt/md）下载后存进服务端自建知识库，供问答调用。',
@@ -234,6 +269,9 @@ export const CAPABILITIES = [
     realApi: null, billable: false,
     experience: {
       output: 'chat', submit: '发送问题',
+      requires: [
+        { text: '知识库里已有资料', cap: 'nlp-kb', note: '先去知识库管理传资料，否则只能回答没有' },
+      ],
       fields: [
         { key: 'text', label: '你的问题', type: 'textarea', default: '这个平台能做什么？', hint: '回答会逐字出现，可随时点「停止」' },
       ],
@@ -250,6 +288,10 @@ export const CAPABILITIES = [
     realApi: null, billable: false,
     experience: {
       output: 'json', submit: '创建直播间',
+      requires: [
+        { text: '已训练并预热的数字人形象', cap: 'avatar-train', note: '先训形象；预热与形象配置由管理员在服务端完成' },
+        { text: '创建即开始计时', note: '只建不开播，不推流；开播前确认脚本已备好' },
+      ],
       fields: [
         { key: 'name', label: '脚本名称', type: 'text', default: '双十一专场脚本' },
         { key: 'scene', label: '脚本场景', type: 'select', default: '带货', options: [['带货', '带货'], ['问答', '问答'], ['讲解', '课程讲解']] },
@@ -267,6 +309,10 @@ export const CAPABILITIES = [
     realApi: null, billable: true,
     experience: {
       output: 'json', submit: '创建直播间（演示）',
+      requires: [
+        { text: '已训练并预热的数字人形象', cap: 'avatar-train', note: '先训形象；预热与形象配置由管理员在服务端完成' },
+        { text: '创建即开始计时', note: '只建不开播，不推流；开播后每 60 秒需心跳，关播须调接口，否则占用路数' },
+      ],
       fields: [
         { key: 'name', label: '直播间名称', type: 'text', default: '品牌旗舰直播间' },
         { key: 'avatarType', label: 'avatarType', type: 'select', default: '5', options: [['5', '5（超级直播间 Pro）'], ['4', '4（超级直播间非 Pro）']], hint: 'Pro 必须为 5' },
@@ -284,6 +330,10 @@ export const CAPABILITIES = [
     realApi: null, billable: true,
     experience: {
       output: 'json', submit: '创建装修任务',
+      requires: [
+        { text: '装修脚本文案', note: '每份脚本生成一个视频素材，素材完成后才能建直播' },
+        { text: '视频互动直播并发路数已开通', note: '路数为 0 时建直播会被平台拒绝，剩余额度见「我的额度」' },
+      ],
       fields: [
         { key: 'name', label: '会话名称', type: 'text', default: '产品发布会互动直播' },
         { key: 'script', label: '装修脚本文案', type: 'textarea', default: '您好，欢迎来到直播间。', hint: '每份装修脚本生成一个数字人视频素材，素材完成后才能用来创建直播' },
@@ -293,6 +343,14 @@ export const CAPABILITIES = [
       mockJson: { sessionId: 'sess_demo_7b03fa', name: '产品发布会互动直播', status: '未开播', playListCount: 1, takeoverQueue: 0, conflictStrategy: '强制切换', apiCount: 20 },
     },
   },
+];
+
+export const GUIDED_PATH = [
+  { cap: 'video-tts', title: '先跑通一次', why: '只填文案就能出视频，零前置；先确认真实环境是通的。' },
+  { cap: 'voice-tts', title: '拿到一段音频', why: '合成的音频可以下载，后面做图片数字人直接用。' },
+  { cap: 'video-image', title: '照片 + 音频出片', why: '上传一张人像照片，配上刚合成的音频，生成会说话的数字人。' },
+  { cap: 'avatar-train', title: '训自己的形象', why: '按采集标准拍一段 6 分钟视频，得到 face_feature_id，解锁视频脚本与直播。' },
+  { cap: 'video-script', title: '用形象出成片', why: '把训好的形象填进脚本，提交生成精品视频；有形象后也能开直播。' },
 ];
 
 export const SCENARIOS = [

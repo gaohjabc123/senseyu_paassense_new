@@ -1,7 +1,45 @@
 // experience.js —— 通用能力体验器（数据驱动：按 capabilities.js 的规格渲染任意能力）
-import { groupOf, OUTPUT_LABEL } from './capabilities.js';
+import { groupOf, OUTPUT_LABEL, capById } from './capabilities.js';
 import { esc } from './html.js';
 import { errorBlock } from './views.js';
+
+/** 上传按钮的文件选择器过滤（与服务端 media.mjs 白名单一致；服务端是最终校验） */
+const UPLOAD_ACCEPT = {
+  image: 'image/png,image/jpeg,image/webp,image/gif',
+  audio: 'audio/mpeg,audio/wav,audio/mp4,audio/aac,.mp3,.wav,.m4a,.aac',
+  video: 'video/mp4,video/quicktime,.mp4,.mov',
+  media: 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,.mp4,.mov',
+};
+
+/**
+ * 结果卡上的「下一步」：把这次的成果直接带入下一个能力，不用复制粘贴。
+ * 只在真实环境显示（演示结果是本地样例地址，带过去没法真用）。
+ */
+export const NEXT_STEPS = {
+  'voice-tts': [{ label: '用这段音频做图片数字人', cap: 'video-image', params: (r) => ({ audioUrl: r.audioUrl || '' }) }],
+  'avatar-train': [{ label: '用这个形象生成视频', cap: 'video-script', params: (r) => ({ faceFeatureId: r.json?.faceFeatureId || '' }) }],
+  'nlp-kb': [{ label: '去问答试试', cap: 'nlp-chat', params: () => ({}) }],
+};
+
+function nextStepsHtml(r, cap) {
+  if (!cap || r.mode !== 'real') return '';
+  const steps = (NEXT_STEPS[cap.id] || []).filter((s) => {
+    const p = s.params(r);
+    return Object.values(p).every((v) => typeof v === 'string' && v.length > 0);
+  });
+  if (!steps.length) return '';
+  return `<div class="actions next-steps"><span class="muted">下一步：</span>${steps.map((s) => `<button class="btn btn--primary btn--sm" type="button" data-action="exp-next" data-cap="${esc(s.cap)}">${esc(s.label)}</button>`).join('')}</div>`;
+}
+
+function requiresCard(ex) {
+  const reqs = ex.requires || [];
+  if (!reqs.length) return '';
+  return `<div class="card"><div class="card__title"><h2>开始之前</h2><span class="pill pill--info">按顺序准备，不容易跑一半失败</span></div>
+    <ol class="req-list">${reqs.map((rq) => {
+      const target = rq.cap ? capById(rq.cap) : null;
+      return `<li><b>${esc(rq.text)}</b>${rq.note ? `<span class="muted"> ${esc(rq.note)}</span>` : ''}${target ? ` <a class="btn btn--sm" href="#experience/${esc(target.id)}" data-view="experience">去${esc(target.name)}</a>` : ''}</li>`;
+    }).join('')}</ol></div>`;
+}
 
 export function experienceView(s, cap) {
   const ex = cap.experience || {};
@@ -16,11 +54,15 @@ export function experienceView(s, cap) {
     if (f.type === 'textarea') control = `<textarea ${common} class="editor exp-input" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(val)}</textarea>`;
     else if (f.type === 'select') control = `<select ${common} class="input exp-input">${(f.options || []).map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
     else control = `<input ${common} class="input exp-input" type="${f.type === 'number' ? 'number' : 'text'}" value="${esc(val)}" placeholder="${esc(f.placeholder || '')}" />`;
-    return `<div class="form-field"><label for="${id}">${esc(f.label)}</label>${control}${f.hint ? `<small class="field-hint" id="${id}-hint">${esc(f.hint)}</small>` : ''}</div>`;
+    // 可上传的 URL 字段：右侧放「上传文件」，传完自动填入本站地址
+    const upload = f.upload ? `<button class="btn btn--sm" type="button" data-action="exp-upload" data-field="${esc(f.key)}" data-kind="${esc(f.upload)}" ${busy ? 'disabled' : ''}>上传文件</button><input type="file" class="sr-only" data-upload-field="${esc(f.key)}" data-kind="${esc(f.upload)}" accept="${esc(UPLOAD_ACCEPT[f.upload] || '')}" tabindex="-1" />` : '';
+    const row = upload ? `<div class="exp-field-row">${control}${upload}</div>` : control;
+    return `<div class="form-field"><label for="${id}">${esc(f.label)}</label>${row}${f.hint ? `<small class="field-hint" id="${id}-hint">${esc(f.hint)}</small>` : ''}</div>`;
   }).join('');
 
   return `<div class="console exp-shell">
     <nav class="exp-crumb" aria-label="位置"><a href="#catalog" data-view="catalog">能力目录</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
+    ${requiresCard(ex)}
     <div class="grid-2 exp-grid">
       <div class="card"><div class="card__title"><h2>填写参数</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>
         <div class="form-grid">${fields}</div>
@@ -43,7 +85,7 @@ export function experienceView(s, cap) {
     </div>
     ${busy ? `<div class="card">${progressLine(e)}</div>` : ''}
     ${e.error ? `<div class="card">${errorBlock(e.error, { retry: 'exp-run', resume: 'exp-resume' })}</div>` : ''}
-    ${e.result ? experienceResult(e.result) : ''}
+    ${e.result ? experienceResult(e.result, cap) : ''}
   </div>`;
 }
 
@@ -55,7 +97,7 @@ function progressLine(e) {
     ${e.queued ? '<p class="task-progress__note">平台侧队列可能在排队，任务还没开始生成。可以继续等待，也可以停止后稍后重试。</p>' : ''}</div>`;
 }
 
-export function experienceResult(r) {
+export function experienceResult(r, cap) {
   const out = r.output;
   let body = '';
   const save = '<button class="btn" type="button" data-action="exp-save">保存到作品</button>';
@@ -80,6 +122,7 @@ export function experienceResult(r) {
       ${r.mode === 'real' ? '<span class="pill pill--ok">真实环境结果</span>' : '<span class="pill pill--mock">演示结果 · 本地样例</span>'}</div>
     ${body}
     ${note ? `<p class="explain-card">${esc(note)}</p>` : ''}
+    ${nextStepsHtml(r, cap)}
     ${r.mode !== 'real' ? '<p class="field-hint">演示结果是预置样例，用来展示这项能力的输出形态，不代表真实生成效果。</p>' : ''}
   </div>`;
 }

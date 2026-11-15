@@ -236,6 +236,29 @@ export function uploadKb(file, { onProgress } = {}) {
   });
 }
 
+/** 上传一个素材文件（图片/音频/视频）到本站（带上传进度）；返回 { url, name, size, kind }，url 为相对路径 */
+export function uploadMedia(file, { kind, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', 'api/media/upload');
+    const h = headers(false);
+    h['X-File-Name'] = encodeURIComponent(file.name);
+    h['X-File-Kind'] = kind;
+    h['Content-Type'] = file.type || 'application/octet-stream';
+    for (const [k, v] of Object.entries(h)) xhr.setRequestHeader(k, v);
+    xhr.timeout = 300000; // 视频上传放宽到 5 分钟
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => {
+      let j = null; try { j = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+      if (j?.code === 0) resolve(j.data);
+      else reject(new ApiError({ message: j?.message || '上传没有成功。', hint: j?.hint || '请稍后重试。', action: j?.action || 'retry', code: j?.code, status: xhr.status }));
+    };
+    xhr.onerror = () => reject(networkError());
+    xhr.ontimeout = () => reject(timeoutError());
+    xhr.send(file);
+  });
+}
+
 /** 知识库问答（SSE）。回调：onMeta / onDelta(累计文本) / onError */
 export async function chatStream(text, { onMeta, onDelta, signal } = {}) {
   let r;

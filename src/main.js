@@ -5,12 +5,12 @@ import './style.css';
 import { PRODUCT, DEFAULT_VIEW, SITE_VIEWS, navById, SHORTCUT_MODULE } from './lib/product.js';
 import { TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone } from './lib/guide.js';
 import { validateText, estimateSeconds, stageLabel } from './lib/wizard.js';
-import { api, ApiError, getMode, setMode, pollTask, uploadKb, chatStream, toApiError } from './lib/api.js';
+import { api, ApiError, getMode, setMode, pollTask, uploadKb, uploadMedia, chatStream, toApiError } from './lib/api.js';
 import { listWorks, addWork, removeWork, renameWork, clearWorks } from './lib/works.js';
 import { capById } from './lib/capabilities.js';
 import { words } from './lib/html.js';
 import * as V from './lib/views.js';
-import { experienceView } from './lib/experience.js';
+import { experienceView, NEXT_STEPS } from './lib/experience.js';
 import { initialAdminState, parseAdminHash, renderAdminRoute, ADMIN_ROUTES, credentialDialog, createAdminController } from './lib/admin.js';
 
 const SAMPLE_TEXT = '新款智能手表今天上市，支持全天心率监测、睡眠分析与运动记录，轻巧续航七天，欢迎到店体验。';
@@ -29,6 +29,7 @@ const state = {
   kb: { loaded: false, loading: false, loadError: null, docs: [], uploads: [], dragging: false, deleting: null },
   chat: { messages: [], input: '', streaming: false, abort: null, lastQuestion: '' },
   exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null },
+  expPrefill: null, // 「下一步」带入的参数：跳到目标能力时一次性填入（applyRoute 里消费）
   token: { loading: false, data: null, error: null },
   works: listWorks(), worksError: null, localWorkCount: 0,
   dialog: null,
@@ -209,6 +210,7 @@ function applyRoute() {
   if (r.view === 'experience' && r.capId !== state.exp.capId) {
     state.exp.abort?.abort();
     state.exp = { capId: r.capId, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null };
+    if (state.expPrefill?.capId === r.capId) { state.exp.params = { ...state.expPrefill.params }; state.expPrefill = null; }
   }
   if (r.view === 'tasks' || r.view === 'overview') reloadWorks().then((changed) => { if (changed && state.view === r.view && !state.dialog) render(); });
   if (r.view === 'create' && state.me) {
@@ -377,6 +379,32 @@ async function uploadFiles(fileList) {
   }
   const ok = items.filter((x) => x.state === 'done').length;
   if (ok) toast(`已上传 ${ok} 份资料`);
+}
+
+/** 能力表单里的素材上传：传到本站，得到绝对地址后填进对应字段（多行 textarea 追加一行） */
+async function uploadMediaField(input) {
+  const file = input.files?.[0];
+  const field = input.dataset.uploadField;
+  const kind = input.dataset.kind || 'image';
+  if (!file || !field) return;
+  if (file.size === 0) { toast('文件是空的'); return; }
+  const btn = document.querySelector(`[data-action="exp-upload"][data-field="${field}"]`);
+  const label = btn?.textContent || '上传文件';
+  if (btn) { btn.disabled = true; btn.textContent = '上传中…'; }
+  try {
+    const d = await uploadMedia(file, { kind, onProgress: (p) => { if (btn) btn.textContent = `上传中 ${p}%`; } });
+    const url = new URL(d.url, location.href).href;
+    const el = document.querySelector(`[data-field="${field}"]`);
+    const cur = String(state.exp.params[field] ?? el?.value ?? '');
+    state.exp.params[field] = el?.tagName === 'TEXTAREA' && cur.trim() ? `${cur.replace(/\s+$/, '')}\n${url}` : url;
+    render();
+    toast('已上传，地址已填入表单');
+  } catch (e) {
+    const err = toApiError(e);
+    toast(err.message + (err.hint ? ` ${err.hint}` : ''));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
 }
 
 async function deleteDoc(id) {
@@ -658,6 +686,16 @@ const actions = {
   'exp-reset': () => { state.exp.params = {}; state.exp.error = null; render(); },
   'exp-save': saveExperience,
   'exp-copy': copyExperience,
+  'exp-next': (el) => {
+    const step = (NEXT_STEPS[state.exp.capId] || []).find((x) => x.cap === el.dataset.cap);
+    if (!step) return;
+    state.expPrefill = { capId: step.cap, params: step.params(state.exp.result || {}) };
+    go(`experience/${step.cap}`);
+  },
+  'exp-upload': (el) => {
+    if (!state.me?.user) { toast('请先登录再上传文件。登录后上传的素材会得到一个本站地址，直接填进表单就能用。'); return; }
+    document.querySelector(`[data-upload-field="${el.dataset.field}"]`)?.click();
+  },
   'token-fetch': () => loadToken(false),
   'token-force': () => loadToken(true),
   'nav-collapse': () => { state.navCollapsed = !state.navCollapsed; try { localStorage.setItem('ruying-nav-collapsed', state.navCollapsed ? '1' : '0'); } catch { /* ignore */ } render(); },
@@ -757,6 +795,7 @@ document.addEventListener('change', (ev) => {
     if (obj) { obj[key] = el.value; if (el.dataset.live !== undefined) render(); }
   }
   if (admin.change(el)) return;
+  if (ev.target.dataset?.uploadField) { uploadMediaField(ev.target); ev.target.value = ''; return; }
   if (ev.target.id === 'kb-file') { uploadFiles(ev.target.files); ev.target.value = ''; }
 });
 

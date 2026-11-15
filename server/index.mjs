@@ -22,6 +22,7 @@ import { maskValue, redactText } from './lib/mask.mjs';
 import { AppError, E, toAppError, errorBody } from './lib/errors.mjs';
 import { openDb } from './lib/db.mjs';
 import { createTenancy, SHORTCUT_MODULE, MODULE_IDS } from './lib/tenancy.mjs';
+import { mediaDir, mediaSpec, storeMedia, sweepMedia } from './lib/media.mjs';
 import { createQuota, costOf, METERS } from './lib/quota.mjs';
 import { createTeaching } from './lib/teaching.mjs';
 import { CAPABILITIES, GROUPS, capById, stats, OUTPUT_LABEL } from '../src/lib/capabilities.js';
@@ -31,8 +32,8 @@ const MAX_BODY = 1.5 * 1024 * 1024;
 const COOKIE = 'ry_sid';
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
-  '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.json': 'application/json; charset=utf-8', '.woff2': 'font/woff2',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.json': 'application/json; charset=utf-8', '.woff2': 'font/woff2',
 };
 const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.svg', '.json']);
 // 业务失败统一 HTTP 200 + code≠0；只有接口不存在 / 请求体过大 / 未登录 / 服务端异常使用 HTTP 错误码
@@ -44,12 +45,13 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
   const BASE = (process.env.PUBLIC_BASE_PATH || '').replace(/\/+$/, '');
   const MOCK = createMock({ taskMs: cfg.mockTaskMs });
   const kb = new KbStore(cfg.kbDir, { log: (m) => log.warn(m) });
+  const MEDIA_DIR = mediaDir(cfg.kbDir); // 站内上传的素材（图片/音频/视频），按 /media/<随机名> 对外提供
   const db = injectedDb || openDb(cfg.dbFile);
   const Q = createQuota({ db });
   const T = createTenancy({ db, cfg, quota: Q, log: (m) => log.log(m) });
   const TE = createTeaching({ db, tenancy: T });
   T.bootstrap();
-  try { kb.prune(); T.pruneLogs(); } catch { /* ignore */ }
+  try { kb.prune(); T.pruneLogs(); sweepMedia(MEDIA_DIR); } catch { /* ignore */ }
 
   const realTasks = new Map();   // 平台任务编号 -> { owner, vendorKey, canBill }
   const loggedTasks = new Set(); // 已记录完成情况的任务
@@ -86,6 +88,18 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       const raw = Buffer.concat(parts).toString('utf8');
       if (!raw) return resolve({});
       try { resolve(JSON.parse(raw)); } catch { reject(E.validation('请求格式不正确。')); }
+    });
+    req.on('error', reject);
+  });
+
+  /** 读原始二进制请求体（素材上传用；上限按文件类型定，超了直接 413） */
+  const readRaw = (req, maxBytes) => new Promise((resolve, reject) => {
+    let size = 0; const parts = [];
+    req.on('data', (c) => { size += c.length; if (size <= maxBytes) parts.push(c); });
+    req.on('end', () => {
+      if (size > maxBytes) return reject(fail('PAYLOAD_TOO_LARGE', '文件太大了。', `单个文件请控制在 ${Math.round(maxBytes / 1024 / 1024)}MB 以内。`));
+      if (!size) return reject(E.validation('没有收到文件内容。'));
+      resolve(Buffer.concat(parts));
     });
     req.on('error', reject);
   });
@@ -736,6 +750,17 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         return send(res, 200, { code: `KB_${e.kbCode}`, message: e.message, hint: dupe ? '列表里已有这份资料，可以直接提问。' : '', action: 'fix', data: null });
       }
     }
+    /* ---------- 站内素材上传：登录用户传图片/音频/视频，得到本站可公开访问的地址 ---------- */
+    if (p === '/api/media/upload' && m === 'POST') {
+      requireUser(ctx); // 未登录不开放上传，避免公开地址被滥用
+      const kind = String(req.headers['x-file-kind'] || '');
+      const spec = mediaSpec(kind); // 类型不对先报，不读请求体
+      let filename = '';
+      try { filename = decodeURIComponent(String(req.headers['x-file-name'] || '')); } catch { filename = ''; }
+      const saved = storeMedia({ dir: MEDIA_DIR, kind, filename, buffer: await readRaw(req, spec.maxBytes) });
+      T.writeLog({ category: 'usage', action: 'media.upload', capability: null, mode: 'mock', detail: `${saved.name}（${Math.round(saved.size / 1024)}KB）`, ...actorOf(ctx) });
+      return ok(res, { url: saved.url, name: saved.name, size: saved.size, kind });
+    }
     if (p === '/api/kb' && m === 'DELETE') {
       T.assertModule(a, SHORTCUT_MODULE.chat);
       const ws = workspaceOf(req, ctx);
@@ -866,6 +891,13 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
     }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
+    if (p.startsWith('/media/')) {
+      // 站内上传的素材：只认单层随机文件名，不拼用户给的路径
+      const name = p.slice(7);
+      if (!name || name !== path.basename(name)) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('not found'); }
+      if (serveFile(req, res, path.join(MEDIA_DIR, name), { cache: 'public, max-age=86400' })) return;
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('not found');
+    }
     if (p.startsWith('/files/')) {
       const f = path.join(MOCK.assets, path.basename(p));
       if (serveFile(req, res, f, { cache: 'public, max-age=86400' })) return;

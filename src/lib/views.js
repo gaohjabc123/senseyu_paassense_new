@@ -1,7 +1,7 @@
 // views.js —— 视图渲染（纯函数：state → HTML）
 // 外壳（顶栏/页脚，含双 logo）只在启动时渲染一次；这里的函数只负责动态内容区与覆盖层。
 import { PRODUCT, BRAND_LOGOS, MODE_NOTICE, navFor, SHORTCUT_MODULE, roleLabel } from './product.js';
-import { GROUPS, CAPABILITIES, SCENARIOS, INTEGRATION_STEPS, capsOf, stats, capById, groupOf, OUTPUT_LABEL } from './capabilities.js';
+import { GROUPS, CAPABILITIES, SCENARIOS, INTEGRATION_STEPS, GUIDED_PATH, capsOf, stats, capById, groupOf, OUTPUT_LABEL } from './capabilities.js';
 import { INTERPRET, TOUR_STEPS } from './guide.js';
 import { EXPERIENCES, estimateSeconds } from './wizard.js';
 import { esc, words } from './html.js';
@@ -487,7 +487,9 @@ export function tasksView(s) {
 export function catalogView(s) {
   const filter = s.capFilter || 'all';
   const list = filter === 'all' ? CAPABILITIES : CAPABILITIES.filter((c) => c.group === filter);
-  return `<div class="console">${filterRow(filter)}${capTable(list, s)}
+  const guided = filter === 'all' ? `<div class="card guided-path"><div class="card__title"><h2>推荐上手顺序</h2><span class="pill pill--info">第一次用，按这个顺序走</span></div>
+    <ol class="steps-grid">${GUIDED_PATH.map((step, i) => { const c = capById(step.cap); return `<li class="step-card"><span class="step-card__n" aria-hidden="true">${i + 1}</span><h3>${esc(c?.name || step.cap)}</h3><p>${esc(step.why)}</p>${c ? `<button class="btn btn--sm btn--primary" type="button" data-use="${c.id}">去体验</button>` : ''}</li>`; }).join('')}</ol></div>` : '';
+  return `<div class="console">${guided}${filterRow(filter)}${capTable(list, s)}
     ${s.me?.access?.kind === 'tenant' ? `<p class="hint-block">已开通 ${allowedModules(s).length} / ${CAPABILITIES.length} 项能力；未开通的能力请联系企业管理员或商予科技。</p>` : ''}</div>`;
 }
 
