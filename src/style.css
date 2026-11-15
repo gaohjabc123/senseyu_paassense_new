@@ -70,6 +70,7 @@ main:focus { outline: none; }
 .console-shell.nav-collapsed .nav-collapse { justify-content: center; padding: 8px 0; }
 
 .console-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-8) 0 var(--sp-6); flex-wrap: wrap; }
+.console-bar__left { display: flex; align-items: center; gap: var(--sp-3); }
 .console-bar h1 { font-size: var(--text-2xl); letter-spacing: -.6px; }
 .console-bar__right { display: flex; align-items: center; gap: var(--sp-2); }
 .console { padding: 0 var(--sp-8) var(--sp-12); max-width: var(--maxw); }

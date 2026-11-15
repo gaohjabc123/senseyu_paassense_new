@@ -1,7 +1,8 @@
 // views.js —— 视图渲染（纯函数：state → HTML）
 // 外壳（顶栏/页脚，含双 logo）只在启动时渲染一次；这里的函数只负责动态内容区与覆盖层。
-import { PRODUCT, BRAND_LOGOS, MODE_NOTICE, navFor, SHORTCUT_MODULE, roleLabel } from './product.js';
+import { PRODUCT, BRAND_LOGOS, MODE_NOTICE, navFor, navById, SHORTCUT_MODULE, roleLabel } from './product.js';
 import { GROUPS, CAPABILITIES, SCENARIOS, INTEGRATION_STEPS, GUIDED_PATH, capsOf, stats, capById, groupOf, OUTPUT_LABEL } from './capabilities.js';
+import { backLabelFor } from './navstack.js';
 import { INTERPRET, TOUR_STEPS } from './guide.js';
 import { EXPERIENCES, estimateSeconds } from './wizard.js';
 import { esc, words } from './html.js';
@@ -266,8 +267,21 @@ export function sidenav(s) {
   </nav>`;
 }
 
+/** 返回按钮的目标：有历史回上一个页面；没历史时体验页回能力矩阵、后台深层页回父列表；其余不显示 */
+export function backTargetFor(s) {
+  const stack = s.backStack || [];
+  if (stack.length) return { target: stack[stack.length - 1], label: backLabelFor(stack[stack.length - 1]) };
+  if (s.view === 'experience') return { target: 'capabilities', label: '返回能力矩阵' };
+  if (s.view && s.view.includes('/')) {
+    const parent = s.view.slice(0, s.view.lastIndexOf('/'));
+    if (navById(parent)) return { target: parent, label: backLabelFor(parent) };
+  }
+  return null;
+}
+
 export function consoleBar(s, title) {
-  return `<div class="console-bar"><h1>${esc(title)}</h1>
+  const back = backTargetFor(s);
+  return `<div class="console-bar"><div class="console-bar__left">${back ? `<button class="btn btn--sm" type="button" data-action="nav-back">← ${esc(back.label)}</button>` : ''}<h1>${esc(title)}</h1></div>
     <div class="console-bar__right"><span class="pill ${isReal(s) ? 'pill--ok' : 'pill--mock'}">${isReal(s) ? '真实环境 · 可能计费' : '演示环境 · 不计费'}</span></div></div>`;
 }
 

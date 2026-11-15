@@ -12,6 +12,7 @@ import { words } from './lib/html.js';
 import * as V from './lib/views.js';
 import { experienceView, NEXT_STEPS } from './lib/experience.js';
 import { loadRecent, saveRecent, extractRecent } from './lib/recent.js';
+import { routeKey, pushNav, popNav } from './lib/navstack.js';
 import { initialAdminState, parseAdminHash, renderAdminRoute, ADMIN_ROUTES, credentialDialog, createAdminController } from './lib/admin.js';
 
 const SAMPLE_TEXT = '新款智能手表今天上市，支持全天心率监测、睡眠分析与运动记录，轻巧续航七天，欢迎到店体验。';
@@ -32,6 +33,7 @@ const state = {
   exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null },
   expPrefill: null, // 「下一步」带入的参数：跳到目标能力时一次性填入（applyRoute 里消费）
   recent: loadRecent(), // 上次的结果（本机）：上次合成的音频 / 上次训好的形象 / 上次复刻的 QID
+  backStack: [], // 返回栈：走过的页面（本机内存，刷新清空），「返回」按钮按它回上一个页面
   token: { loading: false, data: null, error: null },
   works: listWorks(), worksError: null, localWorkCount: 0,
   dialog: null,
@@ -196,12 +198,21 @@ function parseHash() {
   if (navById(h)) return { view: h };
   return { view: DEFAULT_VIEW };
 }
-function go(view) {
+let navFromGo = false; // 本轮 applyRoute 是站内 go() 触发的（栈已在 go 里压好，不再重复压）
+function go(view, { push = true } = {}) {
   const target = `#${view}`;
+  if (push) state.backStack = pushNav(state.backStack, routeKey(state.route), view);
+  navFromGo = true;
   if (location.hash === target) applyRoute(); else location.hash = target;
 }
 function applyRoute() {
+  const prevKey = routeKey(state.route);
   const r = parseHash();
+  const nextKey = routeKey(r);
+  // 浏览器前进/后退或手输 hash：后退时把已回到的那页弹出栈，前进时把上一页压栈
+  if (navFromGo) navFromGo = false;
+  else if (nextKey === (state.backStack[state.backStack.length - 1] || null)) state.backStack = popNav(state.backStack)[1];
+  else if (prevKey !== nextKey) state.backStack = pushNav(state.backStack, prevKey, nextKey);
   // 首次登录 / 密码被重置：先改密码
   if (state.me?.user?.mustChangePassword && !isSiteLayout(r.view) && r.view !== 'account') { go('account'); return; }
   state.route = r;
@@ -717,6 +728,12 @@ const actions = {
     state.expPrefill = { capId: step.cap, params: step.params(state.exp.result || {}) };
     go(`experience/${step.cap}`);
   },
+  'nav-back': () => {
+    const back = V.backTargetFor(state);
+    if (!back) return;
+    state.backStack = popNav(state.backStack || [])[1]; // 弹出已返回的那一页，避免原地打转
+    go(back.target, { push: false });
+  },
   'exp-upload': (el) => {
     if (!state.me?.user) { toast('请先登录再上传文件。登录后上传的素材会得到一个本站地址，直接填进表单就能用。'); return; }
     document.querySelector(`[data-upload-field="${el.dataset.field}"]`)?.click();
@@ -737,7 +754,7 @@ document.addEventListener('click', (ev) => {
   if (d.action) { ev.preventDefault(); actions[d.action]?.(t); return; }
   if (d.group) { state.capFilter = d.group; return go('capabilities'); }
   if (d.filter) { state.capFilter = d.filter; return render(); }
-  if (d.use) { location.hash = `#experience/${d.use}`; return; }
+  if (d.use) { return go(`experience/${d.use}`); }
   if (d.experience) { state.createTab = d.experience; return go('create'); }
   if (d.create) {
     state.createTab = d.create;
