@@ -50,6 +50,21 @@ test('前置条件的服务端配置状态：config 键名都在 /api/config 的
   assert.ok(count >= 5, `带服务端配置状态的前置条件只有 ${count} 条，预期至少 5 条`);
 });
 
+test('前置条件备注：每条都以「真实模式」开头，写清真实链路再写获取办法', () => {
+  let count = 0;
+  for (const c of CAPABILITIES) {
+    for (const r of c.experience?.requires || []) {
+      count += 1;
+      assert.ok(typeof r.note === 'string' && r.note.length > 0, `${c.id} 的前置条件 ${r.text} 缺少备注`);
+      assert.ok(r.note.startsWith('真实模式'), `${c.id} 的前置条件 ${r.text} 备注未以「真实模式」开头：${r.note}`);
+    }
+  }
+  assert.ok(count >= 20, `前置条件只有 ${count} 条，预期至少 20 条`);
+  // 没有前置条件的能力，字段提示须写清真实/演示行为（拟人大模型 NLP10 只有这一处可写）
+  const nlp = capById('voice-nlp');
+  assert.ok((nlp.experience?.fields || []).some((f) => f.hint?.includes('真实模式')), 'voice-nlp 没有前置条件，字段提示须写清真实模式行为');
+});
+
 test('能力矩阵「需要准备」列：有前置条件的都列得出，无前置条件的显示为空', () => {
   for (const c of CAPABILITIES) {
     const reqs = c.experience?.requires || [];
