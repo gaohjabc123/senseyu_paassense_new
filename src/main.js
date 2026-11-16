@@ -394,30 +394,38 @@ async function uploadFiles(fileList) {
   if (ok) toast(`已上传 ${ok} 份资料`);
 }
 
-/** 能力表单里的素材上传：传到本站，得到绝对地址后填进对应字段（多行 textarea 追加一行） */
+/** 能力表单里的素材上传：传到本站，得到绝对地址后填进对应字段（多行 textarea 追加一行）；
+ * 多图字段一次可多选，按字段的 maxItems 封顶（图片编辑最多 3 张，与服务端 1~3 张校验一致）。 */
 async function uploadMediaField(input) {
-  const file = input.files?.[0];
+  const files = [...(input.files || [])];
   const field = input.dataset.uploadField;
   const kind = input.dataset.kind || 'image';
-  if (!file || !field) return;
-  if (file.size === 0) { toast('文件是空的'); return; }
+  if (!files.length || !field) return;
   const btn = document.querySelector(`[data-action="exp-upload"][data-field="${field}"]`);
   const label = btn?.textContent || '上传文件';
-  if (btn) { btn.disabled = true; btn.textContent = '上传中…'; }
-  try {
-    const d = await uploadMedia(file, { kind, onProgress: (p) => { if (btn) btn.textContent = `上传中 ${p}%`; } });
-    const url = new URL(d.url, location.href).href;
-    const el = document.querySelector(`[data-field="${field}"]`);
-    const cur = String(state.exp.params[field] ?? el?.value ?? '');
-    state.exp.params[field] = el?.tagName === 'TEXTAREA' && cur.trim() ? `${cur.replace(/\s+$/, '')}\n${url}` : url;
-    render();
-    toast('已上传，地址已填入表单');
-  } catch (e) {
-    const err = toApiError(e);
-    toast(err.message + (err.hint ? ` ${err.hint}` : ''));
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = label; }
+  const def = capById(state.exp.capId)?.experience?.fields?.find((f) => f.key === field);
+  const maxItems = Number(def?.maxItems || 0);
+  const currentCount = () => String(state.exp.params[field] ?? document.querySelector(`[data-field="${field}"]`)?.value ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length;
+  let done = 0;
+  for (const file of files) {
+    if (file.size === 0) { toast('文件是空的'); continue; }
+    if (maxItems && currentCount() >= maxItems) { toast(`最多 ${maxItems} 张图片`); break; }
+    if (btn) { btn.disabled = true; btn.textContent = '上传中…'; }
+    try {
+      const d = await uploadMedia(file, { kind, onProgress: (p) => { if (btn) btn.textContent = `上传中 ${p}%`; } });
+      const url = new URL(d.url, location.href).href;
+      const el = document.querySelector(`[data-field="${field}"]`);
+      const cur = String(state.exp.params[field] ?? el?.value ?? '');
+      state.exp.params[field] = el?.tagName === 'TEXTAREA' && cur.trim() ? `${cur.replace(/\s+$/, '')}\n${url}` : url;
+      done += 1;
+    } catch (e) {
+      const err = toApiError(e);
+      toast(err.message + (err.hint ? ` ${err.hint}` : ''));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
   }
+  if (done) { render(); toast(files.length > 1 ? `已上传 ${done} 张，地址已填入表单` : '已上传，地址已填入表单'); }
 }
 
 async function deleteDoc(id) {
@@ -738,6 +746,13 @@ const actions = {
     if (!state.me?.user) { toast('请先登录再上传文件。登录后上传的素材会得到一个本站地址，直接填进表单就能用。'); return; }
     document.querySelector(`[data-upload-field="${el.dataset.field}"]`)?.click();
   },
+  'exp-images-remove': (el) => {
+    const field = el.dataset.field; const url = el.dataset.url || '';
+    if (!field || !url) return;
+    const cur = String(state.exp.params[field] ?? '');
+    state.exp.params[field] = cur.split(/\r?\n/).map((s) => s.trim()).filter((s) => s && s !== url).join('\n');
+    render();
+  },
   'token-fetch': () => loadToken(false),
   'token-force': () => loadToken(true),
   'nav-collapse': () => { state.navCollapsed = !state.navCollapsed; try { localStorage.setItem('ruying-nav-collapsed', state.navCollapsed ? '1' : '0'); } catch { /* ignore */ } render(); },
@@ -806,7 +821,15 @@ document.addEventListener('input', (ev) => {
       }
     }
   } else if (el.dataset.field) {
-    state.exp.params[el.dataset.field] = el.value;
+    // 开关字段（checkbox）：按 data-on / data-off 存「开启」/「关闭」，并同步开关旁的文字
+    if (el.type === 'checkbox') {
+      const on = el.dataset.on ?? '开启'; const off = el.dataset.off ?? '关闭';
+      state.exp.params[el.dataset.field] = el.checked ? on : off;
+      const label = el.closest('.switch')?.querySelector('.switch-label');
+      if (label) label.textContent = el.checked ? on : off;
+    } else {
+      state.exp.params[el.dataset.field] = el.value;
+    }
   }
 });
 

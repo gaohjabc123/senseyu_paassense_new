@@ -59,13 +59,27 @@ export function experienceView(s, cap) {
   const fields = (ex.fields || []).map((f) => {
     const id = `exp-${f.key}`;
     const val = e.params[f.key] ?? f.default ?? '';
-    const common = `id="${id}" data-field="${esc(f.key)}" ${busy ? 'disabled' : ''} ${f.hint ? `aria-describedby="${id}-hint"` : ''}`;
+    const maxAttr = f.maxLength && f.type !== 'select' && f.type !== 'toggle' ? `maxlength="${Number(f.maxLength)}"` : '';
+    const reqAttr = f.required ? 'aria-required="true"' : '';
+    const common = `id="${id}" data-field="${esc(f.key)}" ${busy ? 'disabled' : ''} ${maxAttr} ${reqAttr} ${f.hint ? `aria-describedby="${id}-hint"` : ''}`;
     let control;
-    if (f.type === 'textarea') control = `<textarea ${common} class="editor exp-input" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(val)}</textarea>`;
+    let upload = '';
+    if (f.type === 'images') {
+      // 多图上传（对齐如影「图片编辑信息」弹窗）：上传框 + 缩略图 + 地址框。
+      // 值仍是换行分隔的图片地址，与服务端 buildImageEditBody 的解析口径一致，请求体不动。
+      const urls = String(val).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const maxed = urls.length >= (Number(f.maxItems) || 3);
+      const thumbs = urls.map((u) => `<span class="img-thumb"><img src="${esc(u)}" alt="已上传图片" /><button class="img-thumb__remove" type="button" data-action="exp-images-remove" data-field="${esc(f.key)}" data-url="${esc(u)}" ${busy ? 'disabled' : ''} aria-label="移除这张图片">×</button></span>`).join('');
+      control = `<div class="img-upload"><button class="img-upload-box" type="button" data-action="exp-upload" data-field="${esc(f.key)}" data-kind="${esc(f.upload || 'image')}" ${busy || maxed ? 'disabled' : ''} aria-label="上传图片">+</button>${thumbs}<input type="file" class="sr-only" data-upload-field="${esc(f.key)}" data-kind="${esc(f.upload || 'image')}" accept="${esc(f.accept || UPLOAD_ACCEPT[f.upload] || '')}" multiple tabindex="-1" /></div><textarea ${common} class="editor exp-input" rows="2" placeholder="${esc(f.placeholder || '')}">${esc(val)}</textarea>`;
+    } else if (f.type === 'toggle') {
+      // 开关（对齐如影的图片水印开关）：值仍是「开启」/「关闭」，与请求体里的 watermark 口径一致。
+      const on = String(val) !== '关闭';
+      control = `<label class="switch"><input type="checkbox" ${common} data-on="开启" data-off="关闭" ${on ? 'checked' : ''} /><span class="switch-slider" aria-hidden="true"></span><span class="switch-label">${on ? '开启' : '关闭'}</span></label>`;
+    } else if (f.type === 'textarea') control = `<textarea ${common} class="editor exp-input" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(val)}</textarea>`;
     else if (f.type === 'select') control = `<select ${common} class="input exp-input">${(f.options || []).map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
     else control = `<input ${common} class="input exp-input" type="${f.type === 'number' ? 'number' : 'text'}" value="${esc(val)}" placeholder="${esc(f.placeholder || '')}" />`;
-    // 可上传的 URL 字段：右侧放「上传文件」，传完自动填入本站地址
-    const upload = f.upload ? `<button class="btn btn--sm" type="button" data-action="exp-upload" data-field="${esc(f.key)}" data-kind="${esc(f.upload)}" ${busy ? 'disabled' : ''}>上传文件</button><input type="file" class="sr-only" data-upload-field="${esc(f.key)}" data-kind="${esc(f.upload)}" accept="${esc(UPLOAD_ACCEPT[f.upload] || '')}" tabindex="-1" />` : '';
+    // 可上传的 URL 字段：右侧放「上传文件」，传完自动填入本站地址（多图字段自带上传框，不重复放按钮）
+    if (f.upload && f.type !== 'images') upload = `<button class="btn btn--sm" type="button" data-action="exp-upload" data-field="${esc(f.key)}" data-kind="${esc(f.upload)}" ${busy ? 'disabled' : ''}>上传文件</button><input type="file" class="sr-only" data-upload-field="${esc(f.key)}" data-kind="${esc(f.upload)}" accept="${esc(UPLOAD_ACCEPT[f.upload] || '')}" tabindex="-1" />`;
     const row = upload ? `<div class="exp-field-row">${control}${upload}</div>` : control;
     // 上次的结果：字段空着时一键填入（上次合成的音频 / 上次训好的形象）
     const recent = recentForField(f.key, s.recent || {});
@@ -75,18 +89,21 @@ export function experienceView(s, cap) {
     const defaultAvatar = cap.id === 'video-image' && f.key === 'imageUrl' && s.config?.avatarImageUrl
       ? `<span class="default-avatar"><img src="${esc(s.config.avatarImageUrl)}" class="default-avatar-thumb" alt="服务端默认形象图" /><button class="btn btn--sm btn--ghost" type="button" data-action="exp-default-avatar" data-field="imageUrl" data-value="${esc(s.config.avatarImageUrl)}" ${busy ? 'disabled' : ''}>使用默认形象图</button></span>` : '';
     const extras = [recentChip, defaultAvatar].filter(Boolean).join('');
-    return `<div class="form-field"><label for="${id}">${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${f.hint ? `<small class="field-hint" id="${id}-hint">${esc(f.hint)}</small>` : ''}</div>`;
+    return `<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${f.hint ? `<small class="field-hint" id="${id}-hint">${esc(f.hint)}</small>` : ''}</div>`;
   }).join('');
 
   return `<div class="console exp-shell">
     <nav class="exp-crumb" aria-label="位置"><a href="#catalog" data-view="catalog">能力目录</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
     ${requiresCard(ex, s.config)}
     <div class="grid-2 exp-grid">
-      <div class="card"><div class="card__title"><h2>填写参数</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>
+      <div class="card"><div class="card__title"><h2>${esc(ex.dialogTitle || '填写参数')}</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>
         <div class="form-grid">${fields}</div>
         <div class="actions">
-          <button class="btn btn--primary" type="button" data-action="exp-run" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? '运行中…' : esc(ex.submit || '运行')}</button>
-          <button class="btn" type="button" data-action="exp-reset" ${busy ? 'disabled' : ''}>恢复默认参数</button>
+          ${ex.dialogTitle
+            ? `<button class="btn" type="button" data-action="nav-back" ${busy ? 'disabled' : ''}>取消</button>
+          <button class="btn btn--primary" type="button" data-action="exp-run" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? '运行中…' : esc(ex.submit || '确定')}</button>`
+            : `<button class="btn btn--primary" type="button" data-action="exp-run" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? '运行中…' : esc(ex.submit || '运行')}</button>
+          <button class="btn" type="button" data-action="exp-reset" ${busy ? 'disabled' : ''}>恢复默认参数</button>`}
         </div>
         ${ex.notes ? `<p class="field-hint">${esc(ex.notes)}</p>` : ''}
       </div>

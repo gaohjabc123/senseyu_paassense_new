@@ -530,3 +530,21 @@ main:focus { outline: none; }
 .cred-list { max-height: 46vh; overflow-y: auto; margin: var(--sp-4) 0; border: 1px solid var(--gray-200); border-radius: var(--radius-sm); }
 .toolbar > a.btn { margin-left: auto; }
 @media (max-width: 720px) { .toolbar > a.btn { margin-left: 0; } }
+
+/* ---------- 图片编辑控制台弹窗（对齐如影「图片编辑信息」弹窗） ---------- */
+.req { color: #DC2626; margin-right: 2px; }
+.img-upload { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 8px; }
+.img-upload-box { width: 72px; height: 72px; border: 1px dashed var(--gray-300); border-radius: 8px; background: var(--gray-50); color: var(--gray-400); font-size: 28px; line-height: 1; cursor: pointer; flex: none; padding: 0; }
+.img-upload-box:hover:not(:disabled) { border-color: var(--brand-600); color: var(--brand-600); background: #fff; }
+.img-upload-box:disabled { opacity: .45; cursor: not-allowed; }
+.img-thumb { position: relative; width: 72px; height: 72px; flex: none; }
+.img-thumb img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--gray-200); display: block; }
+.img-thumb__remove { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--gray-900); color: #fff; font-size: 13px; line-height: 1; cursor: pointer; padding: 0; }
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-slider { width: 40px; height: 22px; border-radius: 999px; background: var(--gray-300); position: relative; transition: background .15s; flex: none; }
+.switch-slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .15s; }
+.switch input:checked + .switch-slider { background: var(--brand-600); }
+.switch input:checked + .switch-slider::after { transform: translateX(18px); }
+.switch input:focus-visible + .switch-slider { outline: 2px solid var(--brand-600); outline-offset: 2px; }
+.switch-label { font-size: 13px; color: var(--gray-700); }

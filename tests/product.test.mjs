@@ -63,7 +63,7 @@ test('product：全部能力可体验且体验规格完整（都接入）', () =
     assert.ok(Array.isArray(ex.fields) && ex.fields.length > 0, `${c.id} 没有输入字段`);
     for (const f of ex.fields) {
       assert.ok(f.key && f.label && f.type, `${c.id} 字段定义不完整`);
-      assert.ok(['text', 'textarea', 'select', 'number'].includes(f.type), `${c.id} 字段类型非法`);
+      assert.ok(['text', 'textarea', 'select', 'number', 'images', 'toggle'].includes(f.type), `${c.id} 字段类型非法`);
       if (f.type === 'select') assert.ok(Array.isArray(f.options) && f.options.length, `${c.id} 下拉缺少选项`);
     }
     assert.ok(c.realApi === null || typeof c.realApi === 'string', `${c.id} realApi 定义非法`);

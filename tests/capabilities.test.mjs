@@ -95,3 +95,49 @@ test('下一步链路：来源与目标都存在，参数函数能产出非空�
     }
   }
 });
+
+test('图片编辑：控制台弹窗规格（任务名 20 字、3 图上传、提示词必填、水印开关、取消/确定）', () => {
+  const cap = capById('image-edit');
+  assert.ok(cap, '找不到 image-edit');
+  const ex = cap.experience;
+  assert.equal(ex.dialogTitle, '图片编辑信息');
+  assert.equal(ex.submit, '确定');
+  const byKey = Object.fromEntries((ex.fields || []).map((f) => [f.key, f]));
+  assert.equal(byKey.imageName.label, '任务名');
+  assert.equal(byKey.imageName.maxLength, 20);
+  assert.equal(byKey.imageName.required, true);
+  assert.equal(byKey.images.type, 'images');
+  assert.equal(byKey.images.maxItems, 3);
+  assert.equal(byKey.images.required, true);
+  assert.ok(String(byKey.images.accept || '').includes('image/webp'), '上传框须接受 WEBP');
+  assert.ok(String(byKey.images.accept || '').includes('image/png'), '上传框须接受 PNG');
+  assert.equal(byKey.prompt.label, '文本提示词');
+  assert.equal(byKey.prompt.required, true);
+  assert.equal(byKey.watermark.type, 'toggle');
+  assert.equal(byKey.watermark.default, '开启');
+  // 请求体口径不变：字段 key 与服务端 buildImageEditBody 的入参一致
+  for (const k of ['imageName', 'images', 'prompt', 'watermark']) assert.ok(byKey[k], `缺少字段 ${k}`);
+});
+
+test('图片编辑：渲染出弹窗字段、上传框、水印开关与取消/确定按钮', async () => {
+  const { experienceView } = await import('../src/lib/experience.js');
+  const cap = capById('image-edit');
+  const s = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {} };
+  const html = experienceView(s, cap);
+  for (const needle of ['图片编辑信息', '任务名', '上传图片', '文本提示词', '图片水印', '取消', '确定']) {
+    assert.ok(html.includes(needle), `渲染缺失：${needle}`);
+  }
+  assert.ok(html.includes('img-upload-box'), '须有图片上传框');
+  assert.ok(html.includes('multiple'), '上传框须支持多选');
+  assert.ok(html.includes('image/webp'), '上传框须接受 WEBP');
+  assert.ok(html.includes('maxlength="20"'), '任务名须限 20 字');
+  assert.ok(html.includes('type="checkbox"'), '水印须是开关');
+  assert.ok(html.includes('data-action="nav-back"'), '取消须走返回');
+  assert.ok(!html.includes('data-field="resolution"'), '分辨率没有接口参数，不做假控件');
+  assert.ok(html.includes('没有对应的接口参数'), '须在页面上说明分辨率为什么没有控件');
+  // 有一张图时出现缩略图与移除按钮
+  const s2 = { exp: { running: false, params: { images: 'https://cdn.invalid/a.jpg' }, error: null, result: null }, recent: {}, config: {} };
+  const html2 = experienceView(s2, cap);
+  assert.ok(html2.includes('img-thumb'), '有一张图时须显示缩略图');
+  assert.ok(html2.includes('data-action="exp-images-remove"'), '缩略图须能移除');
+});
