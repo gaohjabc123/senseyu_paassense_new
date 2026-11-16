@@ -54,6 +54,11 @@ async function fakeFetch(url, init = {}) {
       if (failTts) return { ok: true, status: 200, text: async () => JSON.stringify({ code: 400123, message: '文本含不支持字符' }) };
       return ok({ taskId: 'tts-1' });
     case '/api/voice/v3/tts/result': return ok({ status: 5, audioUrl: 'https://cdn.invalid/a.mp3', duration: 6.2 });
+    case '/api/2dvh/v3/material/tts/list': return ok({ result: [
+      { id: 1, materialName: '女声-甜美-晓悦', extendParam: JSON.stringify({ qid: 'qid-a', voiceName: '晓悦', gender: 2 }) },
+      { id: 2, materialName: '女声-甜美-晓悦', extendParam: JSON.stringify({ qid: 'qid-a', voiceName: '晓悦', gender: 2 }) },
+      { id: 3, materialName: '男声-沉稳-云泽', extendParam: JSON.stringify({ qid: 'qid-b', voiceName: '云泽', gender: 1 }) },
+    ] });
     case '/api/2dvh/v1/material/single/image/video/create': return ok({ id: 7788 });
     case '/api/2dvh/v1/material/video/create': return ok(66001);
     case '/api/2dvh/v1/material/voice/clone/qid/create': return ok(11890);
@@ -121,6 +126,34 @@ test('TTS 走 voice v3：request 带 qid，再轮询 result', async () => {
   assert.equal(req.body.qid, 'qid-test');
   assert.ok(calls.some((c) => c.path === '/api/voice/v3/tts/result'));
   assert.ok(!calls.some((c) => c.path.includes('/material/voice/tts')), '不应再调用已不存在的旧 TTS 路径');
+});
+
+test('TTS：选中的发音人 + 三滑块发给平台，越界值夹取到接口范围', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/tts', { text: '欢迎体验如影数字人', qid: 'qid-custom', speedRatio: 3, volume: 500, pitchOffset: -99 }, 'real');
+  assert.equal(r.code, 0, r.message);
+  const req = calls.find((c) => c.path === '/api/voice/v3/tts/request');
+  assert.equal(req.body.qid, 'qid-custom');
+  assert.equal(req.body.speed_ratio, 2, '语速超过 2 应夹取到 2');
+  assert.equal(req.body.volume, 400, '音量超过 400 应夹取到 400');
+  assert.equal(req.body.pitch_offset, -60, '语调低于 -60 应夹取到 -60');
+});
+
+test('TTS：不传参数时不发三滑块，不动老调用的默认音色', async () => {
+  calls.length = 0;
+  await s.post('/api/tts', { text: '欢迎体验如影数字人' }, 'real');
+  const req = calls.find((c) => c.path === '/api/voice/v3/tts/request');
+  assert.equal(req.body.qid, 'qid-test');
+  assert.ok(!('speed_ratio' in req.body) && !('volume' in req.body) && !('pitch_offset' in req.body), '未传参数时不应带三滑块');
+});
+
+test('发音人列表：GET /api/voice/list 返回规整去重后的列表', async () => {
+  const r = await s.get('/api/voice/list', 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.voices.length, 2, '同一 qid 出现两次应去重为一条');
+  assert.deepEqual(r.data.voices.map((v) => v.qid), ['qid-a', 'qid-b']);
+  assert.equal(r.data.voices[0].materialName, '女声-甜美-晓悦');
+  assert.equal(r.data.voices[1].voiceName, '云泽');
 });
 
 test('图片数字人：带 videoName，param 是 JSON 字符串，duration 为整数且 ≥5；任务查询走 task/info {ids}', async () => {

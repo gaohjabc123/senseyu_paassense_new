@@ -186,14 +186,15 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
   /* ---------- 核心能力操作（门户与开放接口共用） ---------- */
   const resolveMode = (m) => (typeof m === 'function' ? m() : m); // 先校验权限，再判断运行模式
 
-  async function opTts(ctx, modeArg, text, purpose) {
+  async function opTts(ctx, modeArg, text, purpose, opts = {}) {
     const module = purpose === 'video' ? SHORTCUT_MODULE.video : SHORTCUT_MODULE.voice;
     guard(ctx, module, purpose === 'video' ? 'video.tts' : 'voice.tts');
     const mode = resolveMode(modeArg);
     if (words(text) < 4) throw E.validation('文案至少 4 个字，请再写一点。');
-    if (words(text) > 200) throw E.validation('文案最多 200 个字，请删减后再生成。');
+    // 上限与控制台 voiceTest 一致：语音合成（测试文本）最多 2000 字；视频口播仍限 200 字（时长与额度口径）
+    if (purpose === 'video' ? words(text) > 200 : words(text) > 2000) throw E.validation(purpose === 'video' ? '文案最多 200 个字，请删减后再生成。' : '测试文本最多 2000 个字，请删减后再生成。');
     return track(ctx, { action: purpose === 'video' ? 'video.tts' : 'voice.tts', capability: module, mode }, () =>
-      metered(ctx, mode, costOf('tts', { text }), 'tts', async () => (mode === 'real' ? { ...(await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.tts(String(text))), mode: 'real' } : MOCK.tts(text))));
+      metered(ctx, mode, costOf('tts', { text }), 'tts', async () => (mode === 'real' ? { ...(await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.tts(String(text), opts)), mode: 'real' } : MOCK.tts(text))));
   }
 
   async function opAvatar(ctx, modeArg, { text = '', audioUrl = '', duration = 0, imageUrl = '', name = '' }) {
@@ -275,7 +276,9 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       }
       if (cap.id === 'voice-tts') {
         if (words(params.text) < 4) throw E.validation('文案至少 4 个字，请再写一点。');
-        const r = await client.tts(String(params.text));
+        if (words(params.text) > 2000) throw E.validation('测试文本最多 2000 个字，请删减后再生成。');
+        const qid = String(params.qidInput || '').trim() || String(params.qid || '').trim() || undefined;
+        const r = await client.tts(String(params.text), { qid, speedRatio: params.speed, volume: params.volume, pitchOffset: params.pitch });
         return { sync: true, result: { capabilityId: id, output: 'audio', title: cap.experience.mockTitle || cap.name, audioUrl: r.audio_url, durationMs: r.duration_ms, mode: 'real' } };
       }
       if (cap.id === 'voice-clone') {
@@ -735,8 +738,14 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       return ok(res, await opTask(ctx, id));
     }
     if (p === '/api/tts' && m === 'POST') {
-      const { text = '', purpose } = await readBody(req);
-      return ok(res, await opTts(ctx, () => modeOf(req, ctx), text, purpose));
+      const { text = '', purpose, qid, speedRatio, volume, pitchOffset } = await readBody(req);
+      return ok(res, await opTts(ctx, () => modeOf(req, ctx), text, purpose, { qid, speedRatio, volume, pitchOffset }));
+    }
+    if (p === '/api/voice/list' && m === 'GET') {
+      const mode = modeOf(req, ctx);
+      // 未登录或演示环境：只给服务端默认音色（晓悦），下拉框不至于空着
+      if (mode !== 'real' || !ctx.access.canReal) return ok(res, { voices: cfg.ttsQid ? [{ qid: cfg.ttsQid, voiceName: '晓悦', materialName: '女声-甜美-晓悦', gender: 2 }] : [] });
+      return ok(res, { voices: await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.voiceList() });
     }
     if (p === '/api/avatar' && m === 'POST') {
       const { text = '', audioUrl = '', duration = 0, imageUrl = '' } = await readBody(req);
@@ -858,7 +867,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       return send2({ list: CAPABILITIES.filter((c) => ctx.access.modules.includes(c.id)).map((c) => ({ id: c.id, name: c.name, group: GROUPS.find((g) => g.id === c.group)?.name, output: c.experience?.output, fields: (c.experience?.fields || []).map((f) => ({ key: f.key, label: f.label, type: f.type })) })) });
     }
     if (m === 'GET' || m === 'POST') T.assertModule(ctx.access, null); // 有效期校验
-    if (seg[0] === 'tts' && m === 'POST') { const b = await readBody(req); return send2(await opTts(ctx, modeFn, String(b.text || ''), 'voice')); }
+    if (seg[0] === 'tts' && m === 'POST') { const b = await readBody(req); return send2(await opTts(ctx, modeFn, String(b.text || ''), 'voice', { qid: b.qid, speedRatio: b.speedRatio, volume: b.volume, pitchOffset: b.pitchOffset })); }
     if (seg[0] === 'videos' && m === 'POST') { const b = await readBody(req); return send2(await opAvatar(ctx, modeFn, { text: b.name || '', audioUrl: b.audioUrl, duration: b.duration, imageUrl: b.imageUrl, name: b.name })); }
     if (seg[0] === 'capabilities' && seg[1] && seg[2] === 'run' && m === 'POST') { const b = await readBody(req); return send2(await opCapability(ctx, modeFn, seg[1], b.params || {})); }
     if (seg[0] === 'tasks' && seg[1] && m === 'GET') return send2(await opTask(ctx, seg[1]));

@@ -419,9 +419,23 @@ function interpret(lines) {
 function voicePanel(s) {
   const v = s.voice;
   const n = words(v.text);
-  return `<div class="card"><div class="card__title"><h2><label for="voice-text">要合成的文字</label></h2><span class="pill ${n > 200 ? 'pill--err' : 'pill--info'}" id="voice-count">${n} / 200 字</span></div>
-    <textarea class="editor" id="voice-text" data-bind="voice.text" rows="3" maxlength="400" ${v.busy ? 'disabled' : ''}>${esc(v.text)}</textarea>
-    <p class="field-hint">${isReal(s) ? '使用服务端配置的平台音色（QID）合成。' : '演示环境返回本地样例音频，时长按字数估算。'}</p>
+  // 发音人下拉与体验页 voice-tts 同源（/api/voice/list）；未加载时只显示占位，失败时退回默认音色
+  const voices = s.voiceOptions;
+  const voiceOpts = !voices
+    ? '<option value="">正在加载发音人列表…</option>'
+    : `<option value="">默认音色（晓悦）</option>${voices.map((x) => `<option value="${esc(x.qid)}" ${v.qid === x.qid ? 'selected' : ''}>${esc(x.materialName || x.voiceName || x.qid)}</option>`).join('')}`;
+  const slider = (key, label, min, max, step, minL, maxL, def) => {
+    const val = v[key] ?? def;
+    return `<div class="form-field"><label for="voice-${key}">${label}</label><div class="range-row"><span class="range-ends" aria-hidden="true">${minL}</span><input class="exp-range" id="voice-${key}" type="range" min="${min}" max="${max}" step="${step}" value="${val}" data-bind="voice.${key}" ${v.busy ? 'disabled' : ''} /><span class="range-ends" aria-hidden="true">${maxL}</span><output class="range-value">${val}</output></div></div>`;
+  };
+  return `<div class="card"><div class="card__title"><h2><label for="voice-text">要合成的文字</label></h2><span class="pill ${n > 2000 ? 'pill--err' : 'pill--info'}" id="voice-count">${n} / 2000 字</span></div>
+    <textarea class="editor" id="voice-text" data-bind="voice.text" rows="3" maxlength="2000" ${v.busy ? 'disabled' : ''}>${esc(v.text)}</textarea>
+    <div class="form-field"><label for="voice-qid">发音人</label><select class="input" id="voice-qid" data-bind="voice.qid" ${v.busy ? 'disabled' : ''}>${voiceOpts}</select><p class="field-hint">平台发音人列表（321 项）；留空用默认音色晓悦。${s.voiceListFailed ? '列表加载失败，可直接输入 QID。' : ''}</p></div>
+    <div class="form-field"><label for="voice-qid-input">或直接输入 QID</label><input class="input" id="voice-qid-input" data-bind="voice.qidInput" value="${esc(v.qidInput || '')}" placeholder="粘贴发音人 QID（为空时用上方选择）" ${v.busy ? 'disabled' : ''} /><p class="field-hint">对应控制台「输入」模式；填了就以这里为准。</p></div>
+    ${slider('speed', '语速', 0.5, 2, 0.05, '快', '慢', 1.25)}
+    ${slider('volume', '音量', 1, 400, 1, '小', '大', 200.5)}
+    ${slider('pitch', '语调', -60, 60, 1, '低沉', '尖锐', 0)}
+    <p class="field-hint">${isReal(s) ? '使用平台发音人合成；语速、音量、语调与控制台一致。' : '演示环境返回本地样例音频，时长按字数估算。'}</p>
     <div class="actions"><button class="btn btn--primary" type="button" data-action="run-voice" ${v.busy ? 'disabled aria-busy="true"' : ''}>${v.busy ? '合成中…' : '合成语音'}</button></div>
     ${v.inputError ? `<p class="field-error" role="alert">${esc(v.inputError)}</p>` : ''}
     ${v.busy ? loadingBlock(isReal(s) ? '平台正在合成配音，通常需要几秒到几十秒…' : '正在合成…') : ''}

@@ -13,7 +13,16 @@ import { isBillable } from './config.mjs';
 import { AppError, E, toAppError } from './errors.mjs';
 
 export const PLATFORM = {
-  ttsRequest: { path: '/api/voice/v3/tts/request', body: (text, qid) => ({ qid, query: text, timeout: 30000 }) },
+  // TTS 三个可调参数与控制台 voiceTest 的三个滑块一一对应：
+  //   语速 speed_ratio [0.5,2]（越大越慢，控制台默认 1.25）、音量 volume [1,400]（控制台默认 200.5）、
+  //   语调 pitch_offset [-60,60]（控制台默认 0）。只在显式传入时才发，不动老调用（视频口播等）的默认音色。
+  ttsRequest: { path: '/api/voice/v3/tts/request', body: (text, qid, opts = {}) => {
+    const b = { qid, query: text, timeout: 30000 };
+    const sr = clampNum(opts.speedRatio, 0.5, 2); if (sr != null) b.speed_ratio = sr;
+    const vol = clampNum(opts.volume, 1, 400); if (vol != null) b.volume = vol;
+    const po = clampNum(opts.pitchOffset, -60, 60); if (po != null) b.pitch_offset = po;
+    return b;
+  } },
   ttsResult: { path: '/api/voice/v3/tts/result', body: (requestId) => ({ request_id: requestId }) },
   imageAvatar: {
     path: '/api/2dvh/v1/material/single/image/video/create',
@@ -66,6 +75,25 @@ export function pick(obj, keys) {
   if (obj == null || typeof obj !== 'object') return undefined;
   for (const k of keys) if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
   return undefined;
+}
+
+/** 数值夹取：非法值返回 null（调用方直接不发该参数，不动平台默认值） */
+export function clampNum(v, min, max) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : null;
+}
+
+/** 发音人列表项规整：extendParam 是 JSON 串，内含 qid、voiceName、gender */
+export function normalizeVoice(r = {}) {
+  let ext = {};
+  try { ext = typeof r.extendParam === 'string' ? JSON.parse(r.extendParam) : (r.extendParam || {}); } catch { ext = {}; }
+  return {
+    id: r.id ?? null,
+    qid: ext.qid || r.qid || '',
+    voiceName: ext.voiceName || r.voiceName || '',
+    materialName: r.materialName || ext.voiceName || '',
+    gender: Number(ext.gender ?? r.gender ?? 0) || 0,
+  };
 }
 
 export const TASK_STATUS_TEXT = { 1: '未开始（平台排队中）', 2: '生成中', 5: '已完成', 9: '失败' };
@@ -172,6 +200,9 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
     }
   }
 
+  // 发音人列表缓存（每个客户端一份，10 分钟有效）
+  let voiceListCache = null;
+
   return {
     post,
     get,
@@ -185,10 +216,11 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
       return normalizeVendorResource(data);
     },
 
-    /** TTS：提交 → 轮询结果，返回 { audio_url, duration_ms } */
-    async tts(text, { maxWaitMs = 60000, intervalMs = 1500 } = {}) {
-      if (!cfg.ttsQid) throw new AppError({ code: 'TTS_NOT_CONFIGURED', message: '真实环境未配置配音音色。', hint: '需要管理员在服务端配置 RUYING_TTS_QID。', action: 'config' });
-      const created = await post(PLATFORM.ttsRequest.path, PLATFORM.ttsRequest.body(text, cfg.ttsQid));
+    /** TTS：提交 → 轮询结果，返回 { audio_url, duration_ms }；opts 可带 qid（选中的发音人，不传用服务端默认）与 speedRatio/volume/pitchOffset */
+    async tts(text, { maxWaitMs = 60000, intervalMs = 1500, qid, speedRatio, volume, pitchOffset } = {}) {
+      const useQid = qid || cfg.ttsQid;
+      if (!useQid) throw new AppError({ code: 'TTS_NOT_CONFIGURED', message: '真实环境未配置配音音色。', hint: '需要管理员在服务端配置 RUYING_TTS_QID。', action: 'config' });
+      const created = await post(PLATFORM.ttsRequest.path, PLATFORM.ttsRequest.body(text, useQid, { speedRatio, volume, pitchOffset }));
       // 平台返回 data: { status, request_id, result }；status 0=已完成（result 里直接有 audio_url）、1000=处理中
       if (created && Number(created.status) === 0 && created.result?.audio_url) {
         return { audio_url: created.result.audio_url, duration_ms: Number(created.result.duration_ms) || 0 };
@@ -209,6 +241,23 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
         await sleep(intervalMs);
       }
       throw new AppError({ code: 'TTS_TIMEOUT', message: '配音生成时间过长。', hint: '平台可能在排队，请稍后重试。', action: 'later' });
+    },
+
+    /** 发音人列表：POST /api/2dvh/v3/material/tts/list（控制台 voiceTest 下拉框的 321 项同源）；10 分钟缓存，按 qid 去重 */
+    async voiceList() {
+      const now = Date.now();
+      if (voiceListCache && now - voiceListCache.at < 10 * 60 * 1000) return voiceListCache.items;
+      const items = [];
+      for (let pageNo = 1; pageNo <= 20; pageNo += 1) {
+        const d = await post('/api/2dvh/v3/material/tts/list', { pageNo, pageSize: 100 });
+        const rows = Array.isArray(d?.result) ? d.result : (Array.isArray(d) ? d : []);
+        for (const r of rows) items.push(normalizeVoice(r));
+        if (rows.length < 100) break;
+      }
+      const seen = new Set(); const out = [];
+      for (const it of items) { if (!it.qid || seen.has(it.qid)) continue; seen.add(it.qid); out.push(it); }
+      voiceListCache = { at: now, items: out };
+      return out;
     },
 
     /** 图片数字人：返回平台任务编号（videoName 先清洗，含符号会被平台卡住） */

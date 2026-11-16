@@ -23,11 +23,12 @@ const state = {
   mode: getMode(),
   navCollapsed: (() => { try { return localStorage.getItem('ruying-nav-collapsed') === '1'; } catch { return false; } })(),
   config: null, configError: null,
+  voiceOptions: null, voiceListFailed: false, // 平台发音人列表（/api/voice/list）：null=未加载，[]=加载失败或为空
   modeSwitching: false, modeError: null,
   capFilter: 'all',
   createTab: 'video',
   video: { text: '新款智能手表今天上市，支持全天心率监测与运动记录，欢迎了解。', imageUrl: '', phase: 'idle', stage: '', queued: false, startedAt: 0, taskId: null, error: null, inputError: '', result: null, abort: null },
-  voice: { text: '大家好，欢迎使用如影 AI 能力开放平台。', busy: false, error: null, inputError: '', result: null },
+  voice: { text: '大家好，欢迎使用如影 AI 能力开放平台。', qid: '', qidInput: '', speed: 1.25, volume: 200.5, pitch: 0, busy: false, error: null, inputError: '', result: null },
   kb: { loaded: false, loading: false, loadError: null, docs: [], uploads: [], dragging: false, deleting: null },
   chat: { messages: [], input: '', streaming: false, abort: null, lastQuestion: '' },
   exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null },
@@ -231,6 +232,7 @@ function applyRoute() {
     if (allowed.length && !allowed.includes(state.createTab)) state.createTab = allowed[0];
   }
   if ((r.view === 'overview' && V.canUse(state, SHORTCUT_MODULE.chat)) || (r.view === 'create' && state.createTab === 'chat')) loadKb();
+  if ((r.view === 'experience' && r.capId === 'voice-tts') || r.view === 'create') loadVoiceList();
   if (r.view === 'settings' && state.mode === 'real') loadToken();
   if (r.view === 'create' && state.createTab === 'video' && state.tour < 0 && shouldShowTour(localStorage)) state.tour = 0;
   if (r.view !== 'create') state.tour = -1;
@@ -239,6 +241,19 @@ function applyRoute() {
 }
 
 /* ================= 数据加载 ================= */
+/** 发音人列表：只拉一次（服务端 10 分钟缓存），失败时留空数组、下拉框退回默认音色 */
+let voiceListLoading = false;
+async function loadVoiceList() {
+  if (state.voiceOptions || voiceListLoading) return;
+  voiceListLoading = true;
+  try {
+    const d = await api.voiceList();
+    state.voiceOptions = Array.isArray(d?.voices) ? d.voices : [];
+    state.voiceListFailed = false;
+  } catch { state.voiceOptions = []; state.voiceListFailed = true; }
+  voiceListLoading = false;
+  render();
+}
 async function loadConfig() {
   state.configError = null;
   try {
@@ -359,11 +374,11 @@ function resumeVideo() {
 async function runVoice() {
   const v = state.voice;
   if (v.busy) return;
-  const check = validateText(v.text, 4, 200);
+  const check = validateText(v.text, 4, 2000);
   if (!check.ok) { v.inputError = check.message; return render(); }
   Object.assign(v, { busy: true, inputError: '', error: null, result: null });
   render();
-  try { v.result = await api.tts(v.text, 'voice'); if (state.mode === 'real' && v.result?.audio_url) state.recent = saveRecent({ audioUrl: v.result.audio_url }); } catch (e) { v.error = toApiError(e); }
+  try { v.result = await api.tts(v.text, 'voice', { qid: (v.qidInput || '').trim() || v.qid || undefined, speedRatio: Number(v.speed ?? 1.25), volume: Number(v.volume ?? 200.5), pitchOffset: Number(v.pitch ?? 0) }); if (state.mode === 'real' && v.result?.audio_url) state.recent = saveRecent({ audioUrl: v.result.audio_url }); } catch (e) { v.error = toApiError(e); }
   v.busy = false; renderIf('create', 'voice');
 }
 
@@ -809,6 +824,8 @@ document.addEventListener('input', (ev) => {
     const obj = parts.reduce((o, k) => o?.[k], state);
     if (!obj) return;
     obj[key] = el.type === 'checkbox' ? el.checked : el.value;
+    // 滑块（创作中心语音面板）：同步滑块旁的数值显示，不整页重渲染
+    if (el.type === 'range') { const out = el.parentElement?.querySelector('.range-value'); if (out) out.textContent = el.value; }
     if (el.dataset.live !== undefined || el.type === 'checkbox' || el.type === 'radio') render();
     const scope = parts[0];
     if (parts.length === 1 && (scope === 'video' || scope === 'voice')) {
@@ -821,8 +838,12 @@ document.addEventListener('input', (ev) => {
       }
     }
   } else if (el.dataset.field) {
-    // 开关字段（checkbox）：按 data-on / data-off 存「开启」/「关闭」，并同步开关旁的文字
-    if (el.type === 'checkbox') {
+    // 滑块字段（range）：存数值，并同步滑块旁的数值显示，不整页重渲染
+    if (el.type === 'range') {
+      state.exp.params[el.dataset.field] = Number(el.value);
+      const out = el.parentElement?.querySelector('.range-value');
+      if (out) out.textContent = el.value;
+    } else if (el.type === 'checkbox') {
       const on = el.dataset.on ?? '开启'; const off = el.dataset.off ?? '关闭';
       state.exp.params[el.dataset.field] = el.checked ? on : off;
       const label = el.closest('.switch')?.querySelector('.switch-label');

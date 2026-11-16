@@ -64,6 +64,13 @@ export function experienceView(s, cap) {
     const common = `id="${id}" data-field="${esc(f.key)}" ${busy ? 'disabled' : ''} ${maxAttr} ${reqAttr} ${f.hint ? `aria-describedby="${id}-hint"` : ''}`;
     let control;
     let upload = '';
+    // 发音人下拉：选项来自服务端 /api/voice/list（平台 tts/list），加载中只显示一行占位
+    let opts = f.options || [];
+    if (f.optionsFrom === 'voiceList') {
+      opts = !s.voiceOptions
+        ? [['', '正在加载发音人列表…']]
+        : [['', '默认音色（晓悦）'], ...s.voiceOptions.map((v) => [v.qid, v.materialName || v.voiceName || v.qid])];
+    }
     if (f.type === 'images') {
       // 多图上传（对齐如影「图片编辑信息」弹窗）：上传框 + 缩略图 + 地址框。
       // 值仍是换行分隔的图片地址，与服务端 buildImageEditBody 的解析口径一致，请求体不动。
@@ -75,8 +82,12 @@ export function experienceView(s, cap) {
       // 开关（对齐如影的图片水印开关）：值仍是「开启」/「关闭」，与请求体里的 watermark 口径一致。
       const on = String(val) !== '关闭';
       control = `<label class="switch"><input type="checkbox" ${common} data-on="开启" data-off="关闭" ${on ? 'checked' : ''} /><span class="switch-slider" aria-hidden="true"></span><span class="switch-label">${on ? '开启' : '关闭'}</span></label>`;
+    } else if (f.type === 'slider') {
+      // 滑块（语速/音量/语调）：与控制台 voiceTest 的三个滑块一致，值由 input 事件实时同步（见 main.js）
+      const v = val === '' ? f.default : val;
+      control = `<div class="range-row"><span class="range-ends" aria-hidden="true">${esc(f.minLabel || '')}</span><input ${common} class="exp-range" type="range" min="${f.min}" max="${f.max}" step="${f.step ?? 1}" value="${esc(v)}" /><span class="range-ends" aria-hidden="true">${esc(f.maxLabel || '')}</span><output class="range-value" for="${id}">${esc(v)}</output></div>`;
     } else if (f.type === 'textarea') control = `<textarea ${common} class="editor exp-input" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(val)}</textarea>`;
-    else if (f.type === 'select') control = `<select ${common} class="input exp-input">${(f.options || []).map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    else if (f.type === 'select') control = `<select ${common} class="input exp-input">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
     else control = `<input ${common} class="input exp-input" type="${f.type === 'number' ? 'number' : 'text'}" value="${esc(val)}" placeholder="${esc(f.placeholder || '')}" />`;
     // 可上传的 URL 字段：右侧放「上传文件」，传完自动填入本站地址（多图字段自带上传框，不重复放按钮）
     if (f.upload && f.type !== 'images') upload = `<button class="btn btn--sm" type="button" data-action="exp-upload" data-field="${esc(f.key)}" data-kind="${esc(f.upload)}" ${busy ? 'disabled' : ''}>上传文件</button><input type="file" class="sr-only" data-upload-field="${esc(f.key)}" data-kind="${esc(f.upload)}" accept="${esc(UPLOAD_ACCEPT[f.upload] || '')}" tabindex="-1" />`;
@@ -89,7 +100,8 @@ export function experienceView(s, cap) {
     const defaultAvatar = cap.id === 'video-image' && f.key === 'imageUrl' && s.config?.avatarImageUrl
       ? `<span class="default-avatar"><img src="${esc(s.config.avatarImageUrl)}" class="default-avatar-thumb" alt="服务端默认形象图" /><button class="btn btn--sm btn--ghost" type="button" data-action="exp-default-avatar" data-field="imageUrl" data-value="${esc(s.config.avatarImageUrl)}" ${busy ? 'disabled' : ''}>使用默认形象图</button></span>` : '';
     const extras = [recentChip, defaultAvatar].filter(Boolean).join('');
-    return `<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${f.hint ? `<small class="field-hint" id="${id}-hint">${esc(f.hint)}</small>` : ''}</div>`;
+    const hintText = f.key === 'qid' && s.voiceListFailed ? '发音人列表加载失败，可直接输入 QID 或用默认音色' : f.hint;
+    return `<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${hintText ? `<small class="field-hint" id="${id}-hint">${esc(hintText)}</small>` : ''}</div>`;
   }).join('');
 
   return `<div class="console exp-shell">

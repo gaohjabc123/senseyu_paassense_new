@@ -141,3 +141,52 @@ test('图片编辑：渲染出弹窗字段、上传框、水印开关与取消/�
   assert.ok(html2.includes('img-thumb'), '有一张图时须显示缩略图');
   assert.ok(html2.includes('data-action="exp-images-remove"'), '缩略图须能移除');
 });
+
+test('语音合成 TTS：控制台 voiceTest 规格（发音人下拉、直接输 QID、2000 字、三滑块）', () => {
+  const cap = capById('voice-tts');
+  assert.ok(cap, '找不到 voice-tts');
+  const byKey = Object.fromEntries((cap.experience.fields || []).map((f) => [f.key, f]));
+  assert.equal(byKey.qid.type, 'select');
+  assert.equal(byKey.qid.optionsFrom, 'voiceList');
+  assert.equal(byKey.qidInput.type, 'text');
+  assert.equal(byKey.text.maxLength, 2000);
+  assert.equal(byKey.text.required, true);
+  // 三个滑块与控制台一致：语速 0.5～2 默认 1.25（越大越慢）、音量 1～400 默认 200.5、语调 -60～60 默认 0
+  assert.equal(byKey.speed.type, 'slider');
+  assert.deepEqual([byKey.speed.min, byKey.speed.max, byKey.speed.step, byKey.speed.default], [0.5, 2, 0.05, 1.25]);
+  assert.equal(byKey.volume.type, 'slider');
+  assert.deepEqual([byKey.volume.min, byKey.volume.max, byKey.volume.step, byKey.volume.default], [1, 400, 1, 200.5]);
+  assert.equal(byKey.pitch.type, 'slider');
+  assert.deepEqual([byKey.pitch.min, byKey.pitch.max, byKey.pitch.step, byKey.pitch.default], [-60, 60, 1, 0]);
+  assert.ok(String(cap.experience.notes || '').includes('speed_ratio'), '备注须写清三滑块对应的接口参数');
+});
+
+test('语音合成 TTS：渲染出发音人下拉、三个滑块与 2000 字上限', async () => {
+  const { experienceView } = await import('../src/lib/experience.js');
+  const cap = capById('voice-tts');
+  const voices = [
+    { qid: 'qid-a', voiceName: '晓悦', materialName: '女声-甜美-晓悦', gender: 2 },
+    { qid: 'qid-b', voiceName: '云泽', materialName: '男声-沉稳-云泽', gender: 1 },
+  ];
+  const s = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, voiceOptions: voices };
+  const html = experienceView(s, cap);
+  for (const needle of ['发音人', '默认音色（晓悦）', '女声-甜美-晓悦', '男声-沉稳-云泽', '或直接输入 QID', '语速', '音量', '语调', 'maxlength="2000"']) {
+    assert.ok(html.includes(needle), `渲染缺失：${needle}`);
+  }
+  assert.equal((html.match(/type="range"/g) || []).length, 3, '须有三个滑块');
+  assert.ok(html.includes('class="range-row"'), '滑块须有范围行样式');
+  assert.ok(html.includes('value="1.25"'), '语速默认 1.25');
+  assert.ok(html.includes('value="200.5"'), '音量默认 200.5');
+  // 列表未加载时显示占位，不空着
+  const s2 = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, voiceOptions: null };
+  assert.ok(experienceView(s2, cap).includes('正在加载发音人列表'), '列表未加载时须显示占位');
+});
+
+test('音色复刻：同意音频独立上传（留空时复用训练音频）', () => {
+  const cap = capById('voice-clone');
+  assert.ok(cap, '找不到 voice-clone');
+  const byKey = Object.fromEntries((cap.experience.fields || []).map((f) => [f.key, f]));
+  assert.equal(byKey.consentAudioUrl.type, 'text');
+  assert.equal(byKey.consentAudioUrl.upload, 'audio');
+  assert.ok(String(byKey.consentAudioUrl.hint || '').includes('留空'), '同意音频须说明留空时的兜底');
+});

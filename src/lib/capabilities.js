@@ -103,12 +103,17 @@ export const CAPABILITIES = [
     experience: {
       output: 'audio', submit: '合成语音',
       requires: [
-        { text: '配音音色（QID）', config: 'ttsConfigured', note: '真实模式：用这个音色合成语音；服务端已配置，直接合成；换音色找管理员' },
+        { text: '发音人（321 个平台音色）', note: '真实模式：从平台发音人列表里选，留空用默认音色晓悦；也可以直接输入 QID' },
       ],
       fields: [
-        { key: 'text', label: '合成文本', type: 'textarea', default: '大家好，欢迎使用如影 AI 能力开放平台。', hint: '4～200 字；演示环境返回本地样例音频' },
+        { key: 'qid', label: '发音人', type: 'select', default: '', optionsFrom: 'voiceList', hint: '平台发音人列表（321 项）；留空用默认音色晓悦' },
+        { key: 'qidInput', label: '或直接输入 QID', type: 'text', default: '', placeholder: '粘贴发音人 QID（为空时用上方选择）', hint: '对应控制台「输入」模式；填了就以这里为准' },
+        { key: 'text', label: '测试文本', type: 'textarea', default: '大家好，欢迎使用如影 AI 能力开放平台。', maxLength: 2000, required: true, hint: '最多 2000 字；演示环境返回本地样例音频' },
+        { key: 'speed', label: '语速', type: 'slider', min: 0.5, max: 2, step: 0.05, default: 1.25, minLabel: '快', maxLabel: '慢', hint: '0.5 快 ～ 2 慢，默认 1.25' },
+        { key: 'volume', label: '音量', type: 'slider', min: 1, max: 400, step: 1, default: 200.5, minLabel: '小', maxLabel: '大', hint: '1 小 ～ 400 大，默认 200.5' },
+        { key: 'pitch', label: '语调', type: 'slider', min: -60, max: 60, step: 1, default: 0, minLabel: '低沉', maxLabel: '尖锐', hint: '-60 低沉 ～ 60 尖锐，默认 0' },
       ],
-      notes: '真实环境使用服务端配置的平台音色（QID）合成；演示环境返回本地样例音频。',
+      notes: '真实模式：语速、音量、语调分别对应接口参数 speed_ratio、volume、pitch_offset；发音人列表来自平台 tts/list 接口。演示环境返回本地样例音频。',
       mockTitle: '合成语音',
     },
   },
@@ -125,6 +130,7 @@ export const CAPABILITIES = [
       ],
       fields: [
         { key: 'audioUrl', label: '训练音频 URL', type: 'text', default: '', placeholder: 'https://…/voice-sample.mp3', upload: 'audio', hint: '支持 wav/mp3/m4a/aac，建议 10 秒以上、无底噪的清晰人声；点右侧「上传」可直接传本站音频；演示环境返回示例 QID' },
+        { key: 'consentAudioUrl', label: '用户同意音频', type: 'text', default: '', placeholder: 'https://…/consent.mp3', upload: 'audio', hint: '发言人亲口同意的录音；留空时用上面的训练音频代替；点右侧「上传」可直接传本站音频' },
         { key: 'audioLanguage', label: '主要语言', type: 'text', default: 'zh-CN', hint: 'BCP 47，如 zh-CN / en-US' },
         { key: 'voiceName', label: '音色名称', type: 'text', default: '品牌播报音', hint: '不超过 64 字符' },
         { key: 'gender', label: '性别', type: 'select', default: '2', options: [['2', '女'], ['1', '男']] },

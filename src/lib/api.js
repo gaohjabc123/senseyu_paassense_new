@@ -89,7 +89,9 @@ export const api = {
   switchMode: (mode) => post('mode', { mode }),
   token: () => request('token'),
   fetchToken: (force) => post('token', { force: !!force }),
-  tts: (text, purpose) => request('tts', { method: 'POST', body: { text, purpose }, timeoutMs: 90000 }),
+  tts: (text, purpose, opts = {}) => request('tts', { method: 'POST', body: { text, purpose, ...opts }, timeoutMs: 90000 }),
+  /** 发音人列表：GET /api/voice/list，返回 { voices: [{ qid, voiceName, materialName, gender }] } */
+  voiceList: () => request('voice/list'),
   avatar: (payload) => post('avatar', payload),
   /** 单次查询任务状态（不轮询），供任务历史同步使用；返回 { status, result, mode, ... } */
   task: (id) => request('task', { method: 'POST', body: { id }, timeoutMs: 20000 }),

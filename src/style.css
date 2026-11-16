@@ -548,3 +548,9 @@ main:focus { outline: none; }
 .switch input:checked + .switch-slider::after { transform: translateX(18px); }
 .switch input:focus-visible + .switch-slider { outline: 2px solid var(--brand-600); outline-offset: 2px; }
 .switch-label { font-size: 13px; color: var(--gray-700); }
+
+/* 滑块行（语音合成语速/音量/语调）：与控制台 voiceTest 的三个滑块一致 */
+.range-row { display: flex; align-items: center; gap: 10px; }
+.range-row .exp-range { flex: 1; min-width: 0; accent-color: var(--brand-600); }
+.range-row .range-ends { font-size: 12px; color: var(--gray-500); flex: none; }
+.range-row .range-value { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; flex: none; }
