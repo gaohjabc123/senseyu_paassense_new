@@ -277,6 +277,15 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
       return normalizeTask(item, id);
     },
 
+    /** 批量查任务状态：POST /api/2dvh/v1/task/info（ids 数组），返回规整后的任务数组（任务中心列表刷新与历史导入共用） */
+    async taskInfoMany(ids) {
+      const list = [...new Set((ids || []).map(String))].filter(Boolean);
+      if (!list.length) return [];
+      const data = await post(PLATFORM.taskInfo.path, PLATFORM.taskInfo.body(list.map((id) => (Number.isNaN(Number(id)) ? id : Number(id)))));
+      const arr = Array.isArray(data) ? data : (pick(data, ['list', 'records', 'tasks', 'items']) || [data]);
+      return arr.map((item) => normalizeTask(item, pick(item, ['id', 'taskId'])));
+    },
+
     /** 视频合成（video/create）：提交已构造好的 videoName + param，返回任务编号 */
     async createVideoTask({ videoName, param }) {
       const data = await post(PLATFORM.videoCreate.path, { videoName, param }, { billable: true });

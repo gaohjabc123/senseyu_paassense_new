@@ -541,3 +541,53 @@ test('配置状态：/api/config 返回前置资源的配置情况与默认形�
   assert.equal(c.data.liveAvatarConfigured, true, '主测试服务器配了直播形象与预热素材');
   assert.ok(!JSON.stringify(c.data).includes('fake-key'), '配置接口不得泄露 APP_KEY');
 });
+
+test('任务中心：创建即入库，列表按状态刷新并支持筛选与搜索', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'image-edit', params: {
+    imageName: '校园海报', images: 'https://cdn.invalid/a.jpg', prompt: '并排放在一起', watermark: '开启',
+  } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(String(r.data.taskId), '9101');
+  const list = await s.get('/api/tasks', 'real');
+  assert.equal(list.code, 0, list.message);
+  const row = (list.data.tasks || []).find((t) => String(t.id) === '9101');
+  assert.ok(row, '创建的任务应在列表里');
+  assert.equal(row.capability, 'image-edit');
+  assert.equal(row.name, '校园海报', '任务名取自表单里的任务名');
+  assert.equal(row.status, 5, '列表应把未完成任务向平台批量刷新为已完成');
+  assert.equal(row.result?.output, 'image');
+  assert.equal(row.result?.imageUrl, 'https://cdn.invalid/e.jpg');
+  const failed = await s.get('/api/tasks?status=9', 'real');
+  assert.equal((failed.data.tasks || []).length, 0, '失败筛选下不应有任务');
+  const found = await s.get('/api/tasks?q=%E6%A0%A1%E5%9B%AD%E6%B5%B7%E6%8A%A5', 'real');
+  assert.ok((found.data.tasks || []).some((t) => String(t.id) === '9101'), '按任务名搜索应找到');
+  const other = await s.get('/api/tasks?capability=voice-tts', 'real');
+  assert.ok(!(other.data.tasks || []).some((t) => String(t.id) === '9101'), '按能力筛选不应串能力');
+});
+
+test('任务中心：历史导入把浏览器存过的编号写进表，重复导入不重复', async () => {
+  const imp = await s.post('/api/tasks/import', { ids: ['99001'] }, 'real');
+  assert.equal(imp.code, 0, imp.message);
+  assert.equal(imp.data.imported, 1, '新编号应导入 1 条');
+  const list = await s.get('/api/tasks?q=99001', 'real');
+  const row = (list.data.tasks || []).find((t) => String(t.id) === '99001');
+  assert.ok(row, '导入的任务应在列表里');
+  assert.equal(row.capabilityName, '历史任务', '导入的任务能力未知时标历史任务');
+  assert.equal(row.status, 5);
+  const again = await s.post('/api/tasks/import', { ids: ['99001'] }, 'real');
+  assert.equal(again.data.imported, 0, '已登记的编号不再重复导入');
+});
+
+test('任务中心：演示环境列出演示任务', async () => {
+  const r = await s.post('/api/capability/run', { id: 'image-edit', params: {
+    imageName: '演示海报', images: 'https://cdn.invalid/a.jpg', prompt: '并排放在一起', watermark: '开启',
+  } }, 'mock');
+  assert.equal(r.code, 0, r.message);
+  assert.ok(r.data.taskId, '演示环境应返回任务编号');
+  const list = await s.get('/api/tasks', 'mock');
+  assert.equal(list.code, 0, list.message);
+  const row = (list.data.tasks || []).find((t) => String(t.id) === String(r.data.taskId));
+  assert.ok(row, '演示任务应在演示列表里');
+  assert.equal(row.capabilityName, 'AI 图片编辑');
+});

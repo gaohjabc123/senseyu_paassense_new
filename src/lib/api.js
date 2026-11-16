@@ -95,6 +95,10 @@ export const api = {
   avatar: (payload) => post('avatar', payload),
   /** 单次查询任务状态（不轮询），供任务历史同步使用；返回 { status, result, mode, ... } */
   task: (id) => request('task', { method: 'POST', body: { id }, timeoutMs: 20000 }),
+  /** 任务中心：GET /api/tasks，返回 { tasks, total }；params：status（1/2/5/9）、capability、q */
+  taskList: (params = {}) => request(`tasks${qs(params)}`),
+  /** 历史任务导入：POST /api/tasks/import，返回 { imported } */
+  taskImport: (ids) => post('tasks/import', { ids }),
   runCapability: (id, params) => request('capability/run', { method: 'POST', body: { id, params }, timeoutMs: 90000 }),
   kbList: () => request('kb'),
   kbDelete: (id) => del(`kb?id=${encodeURIComponent(id)}`),

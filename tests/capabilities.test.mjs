@@ -190,3 +190,21 @@ test('音色复刻：同意音频独立上传（留空时复用训练音频）',
   assert.equal(byKey.consentAudioUrl.upload, 'audio');
   assert.ok(String(byKey.consentAudioUrl.hint || '').includes('留空'), '同意音频须说明留空时的兜底');
 });
+
+test('任务中心：列表页含状态/能力筛选、搜索、结果链接与保存按钮', async () => {
+  const { taskCenterView } = await import('../src/lib/views.js');
+  const now = Date.now();
+  const s = { taskCenter: { status: 'all', cap: 'all', q: '', list: [
+    { id: '9101', capability: 'image-edit', capabilityName: 'AI 图片编辑', name: '校园海报', status: 5, statusText: '已完成', output: 'image', result: { output: 'image', imageUrl: 'https://cdn.invalid/e.jpg', mode: 'real' }, createdAt: now, updatedAt: now },
+    { id: '7788', capability: 'video-image', capabilityName: '图片数字人', name: '口播新款智能手表', status: 2, statusText: '生成中', output: 'video', result: null, createdAt: now, updatedAt: now },
+  ], total: 2, loading: false, error: null, imported: true } };
+  const html = taskCenterView(s);
+  assert.ok(html.includes('data-bind="taskCenter.status"'), '须有状态筛选');
+  assert.ok(html.includes('data-bind="taskCenter.cap"'), '须有能力筛选');
+  assert.ok(html.includes('data-bind="taskCenter.q"'), '须有搜索框');
+  assert.ok(html.includes('校园海报'), '须显示任务名');
+  assert.ok(html.includes('已完成') && html.includes('生成中'), '须显示状态');
+  assert.ok(html.includes('查看图片'), '图片结果须有查看链接');
+  assert.ok(html.includes('data-action="taskcenter-save"'), '已完成任务须有保存到作品按钮');
+  assert.equal((html.match(/data-action="taskcenter-save"/g) || []).length, 1, '未完成的任务不应出现保存按钮');
+});

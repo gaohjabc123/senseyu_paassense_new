@@ -24,6 +24,7 @@ const state = {
   navCollapsed: (() => { try { return localStorage.getItem('ruying-nav-collapsed') === '1'; } catch { return false; } })(),
   config: null, configError: null,
   voiceOptions: null, voiceListFailed: false, // 平台发音人列表（/api/voice/list）：null=未加载，[]=加载失败或为空
+  taskCenter: { status: 'all', cap: 'all', q: '', list: [], total: 0, loading: false, error: null, imported: false }, // 任务中心列表与筛选
   modeSwitching: false, modeError: null,
   capFilter: 'all',
   createTab: 'video',
@@ -69,9 +70,9 @@ function updateTopbar() {
 
 /* ================= 渲染：只更新内容区 ================= */
 const adminTitle = (v) => { const r = ADMIN_ROUTES[v]; return r ? (state.me?.teaching?.isSchool && r.schoolTitle) || r.title : ''; };
-const CONSOLE_TITLE = { overview: '工作台总览', create: '创作中心', tasks: '我的作品', catalog: '能力目录', settings: '环境与配置', experience: '能力体验' };
+const CONSOLE_TITLE = { overview: '工作台总览', create: '创作中心', taskcenter: '任务中心', tasks: '我的作品', catalog: '能力目录', settings: '环境与配置', experience: '能力体验' };
 const isSiteLayout = (v) => SITE_VIEWS.includes(v) || v === 'login';
-const isWorkspace = (v) => ['overview', 'create', 'tasks', 'catalog', 'settings', 'experience'].includes(v);
+const isWorkspace = (v) => ['overview', 'create', 'taskcenter', 'tasks', 'catalog', 'settings', 'experience'].includes(v);
 const userSlot = document.getElementById('user-slot');
 let userSlotKey = null;
 
@@ -85,7 +86,7 @@ function pageHtml() {
   }
   const page = {
     home: V.homeView, capabilities: V.capabilitiesView, scenarios: V.scenariosView, integration: V.integrationView,
-    overview: V.overviewView, create: V.createView, tasks: V.tasksView, catalog: V.catalogView, settings: V.settingsView,
+    overview: V.overviewView, create: V.createView, taskcenter: V.taskCenterView, tasks: V.tasksView, catalog: V.catalogView, settings: V.settingsView,
   }[s.view] || V.homeView;
   return page(s);
 }
@@ -233,6 +234,8 @@ function applyRoute() {
   }
   if ((r.view === 'overview' && V.canUse(state, SHORTCUT_MODULE.chat)) || (r.view === 'create' && state.createTab === 'chat')) loadKb();
   if ((r.view === 'experience' && r.capId === 'voice-tts') || r.view === 'create') loadVoiceList();
+  if (r.view === 'taskcenter') loadTaskCenter();
+  if (r.view !== 'taskcenter') stopTaskCenterTimer();
   if (r.view === 'settings' && state.mode === 'real') loadToken();
   if (r.view === 'create' && state.createTab === 'video' && state.tour < 0 && shouldShowTour(localStorage)) state.tour = 0;
   if (r.view !== 'create') state.tour = -1;
@@ -254,6 +257,44 @@ async function loadVoiceList() {
   voiceListLoading = false;
   render();
 }
+
+/* ================= 任务中心 ================= */
+/** 任务中心列表：首次打开先把这台浏览器里存过的任务编号导入一次（真实环境），再按筛选拉列表 */
+async function loadTaskCenter() {
+  const tc = state.taskCenter;
+  if (tc.loading) return;
+  tc.loading = true; tc.error = null;
+  if (state.view === 'taskcenter') render();
+  try {
+    if (!tc.imported) {
+      tc.imported = true;
+      try {
+        const raw = JSON.parse(localStorage.getItem(TASK_HISTORY_KEY) || '[]');
+        const ids = (Array.isArray(raw) ? raw : []).map((x) => x.id).filter(Boolean);
+        if (ids.length && state.mode === 'real') await api.taskImport(ids);
+      } catch { /* 导入失败不挡列表 */ }
+    }
+    const d = await api.taskList({ status: tc.status === 'all' ? '' : tc.status, capability: tc.cap === 'all' ? '' : tc.cap, q: tc.q || '' });
+    tc.list = d.tasks || []; tc.total = d.total || 0;
+  } catch (e) { tc.error = toApiError(e); }
+  tc.loading = false;
+  if (state.view !== 'taskcenter') return;
+  render();
+  if ((tc.list || []).some((t) => t.status === 1 || t.status === 2)) startTaskCenterTimer();
+}
+
+/** 未完成的任务每 15 秒自动刷新一次状态，跑完自动停；离开任务中心即停 */
+let taskCenterTimer = null;
+function startTaskCenterTimer() {
+  if (taskCenterTimer) return;
+  taskCenterTimer = setInterval(() => {
+    if (state.view !== 'taskcenter') { stopTaskCenterTimer(); return; }
+    if ((state.taskCenter.list || []).some((t) => t.status === 1 || t.status === 2)) loadTaskCenter();
+    else stopTaskCenterTimer();
+  }, 15000);
+}
+function stopTaskCenterTimer() { if (taskCenterTimer) { clearInterval(taskCenterTimer); taskCenterTimer = null; } }
+
 async function loadConfig() {
   state.configError = null;
   try {
@@ -705,6 +746,25 @@ const actions = {
     catch (e) { toast(toApiError(e).message); }
   },
   'works-reload': async () => { await reloadWorks(); render(); },
+  'taskcenter-refresh': () => loadTaskCenter(),
+  'taskcenter-search': () => loadTaskCenter(),
+  'taskcenter-refresh-one': async (btn) => {
+    const id = btn?.dataset?.task; if (!id) return;
+    try { await api.task(id); } catch (e) { toast(toApiError(e).message); }
+    loadTaskCenter();
+  },
+  // 任务中心：已完成任务的结果文件保存到作品（视频/图片/音频按链接保存）
+  'taskcenter-save': async (btn) => {
+    const id = btn?.dataset?.task; if (!id) return;
+    const t = (state.taskCenter.list || []).find((x) => String(x.id) === String(id));
+    const r = t?.result; if (!r) return;
+    const input = r.output === 'video' && r.videoUrl ? { kind: 'video', type: t.capabilityName || '视频', title: t.name || t.id, url: r.videoUrl, duration: r.duration || null, mode: r.mode || state.mode }
+      : r.output === 'image' && r.imageUrl ? { kind: 'image', type: t.capabilityName || '图片', title: t.name || t.id, url: r.imageUrl, mode: r.mode || state.mode }
+      : r.output === 'audio' && r.audioUrl ? { kind: 'audio', type: t.capabilityName || '语音', title: t.name || t.id, url: r.audioUrl, duration: r.durationMs ? r.durationMs / 1000 : null, mode: r.mode || state.mode }
+      : null;
+    if (!input) { toast('这个任务没有可保存的文件链接。'); return; }
+    saved(await saveWork(input), btn);
+  },
   // 把这台电脑上未登录时保存的作品导入到当前账号（按地址去重），导入后清掉本机记录
   'works-import-local': async () => {
     const local = listWorks();
@@ -879,6 +939,7 @@ document.addEventListener('change', (ev) => {
     const parts = el.dataset.bind.split('.'); const key = parts.pop();
     const obj = parts.reduce((o, k) => o?.[k], state);
     if (obj) { obj[key] = el.value; if (el.dataset.live !== undefined) render(); }
+    if (parts[0] === 'taskCenter') loadTaskCenter(); // 任务中心筛选：选完即重拉列表
   }
   if (admin.change(el)) return;
   if (ev.target.dataset?.uploadField) { uploadMediaField(ev.target); ev.target.value = ''; return; }

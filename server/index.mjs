@@ -14,7 +14,7 @@ import { createMock } from './mock.mjs';
 import { getConfig } from './lib/config.mjs';
 import { VERSION } from './lib/version.mjs';
 import { TokenManager } from './lib/token.mjs';
-import { createRuyingClient, normalizeDuration } from './lib/ruying.mjs';
+import { createRuyingClient, normalizeDuration, TASK_STATUS_TEXT } from './lib/ruying.mjs';
 import { KbStore } from './lib/kb.mjs';
 import { answerQuestion, completeDeepSeek } from './lib/answer.mjs';
 import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveChannelParam, buildDecorationTaskBody, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
@@ -56,6 +56,40 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
 
   const realTasks = new Map();   // 平台任务编号 -> { owner, vendorKey, canBill }
   const loggedTasks = new Set(); // 已记录完成情况的任务
+
+  /** 任务名：优先取表单里的任务名/名称/提示词/文案，取不到用能力名 */
+  const taskName = (capId, params = {}) => {
+    const cand = params.videoName || params.name || params.imageName || params.materialName || params.prompt || params.text || '';
+    const s = String(cand).replace(/\s+/g, ' ').trim();
+    return s ? s.slice(0, 40) : (capById(capId)?.name || capId);
+  };
+
+  /** 任务登记落库：平台任务编号一旦创建就写进 tasks 表（重启不丢），任务中心唯一来源 */
+  function recordTask(taskId, workspace, vendorId, capability, name, charge) {
+    try {
+      db.prepare(`INSERT OR IGNORE INTO tasks (id, workspace, vendor_id, capability, name, status, result, charge, refunded, created_at, updated_at) VALUES (?,?,?,?,?,?,1,'',0,?,?)`)
+        .run(String(taskId), workspace, vendorId, capability, String(name || capability || '').slice(0, 40), charge ? JSON.stringify(charge) : '', Date.now(), Date.now());
+    } catch (e) { log.warn(`任务登记落库失败 ${taskId}: ${toAppError(e).message}`); }
+  }
+
+  /** 同步任务行状态与结果（查询/列表刷新时调用）；落库失败不挡查询 */
+  function updateTaskRow(id, status, result) {
+    try { db.prepare('UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?').run(Number(status) || 1, result ? JSON.stringify(result) : '', Date.now(), String(id)); } catch { /* ignore */ }
+  }
+
+  /** 任务行转前端形状：结果 JSON 解析失败时返回 null，不抛错 */
+  const publicTask = (row) => {
+    let result = null;
+    try { result = row.result ? JSON.parse(row.result) : null; } catch { result = null; }
+    const cap = capById(row.capability);
+    return {
+      id: String(row.id), capability: row.capability || '', capabilityName: cap?.name || (row.capability ? row.capability : '历史任务'),
+      name: row.name || '', status: Number(row.status) || 1,
+      statusText: TASK_STATUS_TEXT[Number(row.status)] || '未知',
+      output: result?.output || cap?.experience?.output || 'video',
+      result, createdAt: row.created_at, updatedAt: row.updated_at,
+    };
+  };
   const vendorRuntime = new Map(); // vendorKey -> { tokens, clients: Map<canBill, client> }
 
   /** 按厂商凭据取得（并缓存）Token 管理器与平台客户端 */
@@ -211,6 +245,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         if (imageUrl && !/^https?:\/\//.test(imageUrl)) throw E.validation('imageUrl 需为 http(s) 地址。');
         const taskId = await rt.client.createImageAvatar({ imageUrl: img, audioUrl, duration, videoName: String(name || `口播${String(text).slice(0, 16)}`).slice(0, 40) });
         realTasks.set(taskId, { owner: ctx.access.workspace, vendorId: ctx.access.vendorId, capability: SHORTCUT_MODULE.video, charge });
+        recordTask(taskId, ctx.access.workspace, ctx.access.vendorId, SHORTCUT_MODULE.video, String(name || `口播${String(text).slice(0, 16)}`).slice(0, 40), charge);
         return { taskId, mode: 'real' };
       }));
   }
@@ -244,6 +279,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       const client = rt.client;
       const registerTask = (taskId, output) => {
         realTasks.set(taskId, { owner: ctx.access.workspace, vendorId: ctx.access.vendorId, capability: cap.id, charge });
+        recordTask(taskId, ctx.access.workspace, ctx.access.vendorId, cap.id, taskName(cap.id, params), charge);
         return { sync: false, taskId, output: output || cap.experience?.output || 'video', mode: 'real' };
       };
       const syncJson = (json, note) => ({ sync: true, result: { capabilityId: id, output: 'json', title: cap.experience.mockTitle || cap.name, json, jsonText: JSON.stringify(json, null, 2), mode: 'real', ...(note ? { realModeNote: note } : {}) } });
@@ -411,11 +447,85 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       // 2.6.0：按能力把平台任务结果规整成前端可直接渲染的形状（带 output 字段）
       const extracted = extractTaskResult(real.capability, t);
       const result = extracted ?? t.result;
+      updateTaskRow(String(id), t.status, result); // 同步落库，任务中心不用等列表刷新
       return { ...t, result, output: result?.output || capById(real.capability)?.experience?.output || 'video', mode: 'real' };
+    }
+    // 重启后内存里的登记丢了，从 tasks 表里找（任务中心唯一来源）
+    const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(String(id));
+    if (row) {
+      if (row.workspace !== ctx.access.workspace) throw E.notFound('找不到这个任务。', '任务只能由提交它的企业查看。');
+      const t = await runtimeFor(row.vendor_id, false).client.taskInfo(id);
+      const extracted = extractTaskResult(row.capability, t);
+      const result = extracted ?? t.result ?? null;
+      updateTaskRow(String(id), Number(t.status) || row.status, result);
+      if (Number(t.status) === 9 && row.charge && !row.refunded) {
+        try { Q.refund(JSON.parse(row.charge), `平台任务 ${id} 失败，自动退回`); db.prepare('UPDATE tasks SET refunded = 1 WHERE id = ?').run(String(id)); } catch { /* 退回失败不挡查询 */ }
+      }
+      return { ...t, result, output: result?.output || capById(row.capability)?.experience?.output || 'video', mode: 'real' };
     }
     const t = MOCK.task(id);
     if (!t) throw E.notFound('找不到这个任务。', '演示任务在服务重启后会被清空，请重新提交。');
     return { ...t, mode: 'mock' };
+  }
+
+  /** 任务中心列表：先把未完成的任务向平台批量刷新一次（最多 50 条，按厂商分组），再按条件查表 */
+  async function opTaskList(ctx, modeArg, sp) {
+    const mode = resolveMode(modeArg);
+    const ws = ctx.access.workspace;
+    if (mode !== 'real') {
+      const all = MOCK.list();
+      return { tasks: all.map((t) => publicTask({ id: String(t.id), capability: t.capability || '', name: t.name || '', status: t.status, result: t.result ? JSON.stringify(t.result) : '', created_at: t.createdAt || Date.now(), updated_at: t.createdAt || Date.now() })), total: all.length };
+    }
+    const pending = db.prepare(`SELECT id, vendor_id FROM tasks WHERE workspace = ? AND status IN (1,2) ORDER BY created_at DESC LIMIT 50`).all(ws);
+    if (pending.length) {
+      const byVendor = new Map();
+      for (const r of pending) { if (!byVendor.has(r.vendor_id)) byVendor.set(r.vendor_id, []); byVendor.get(r.vendor_id).push(r.id); }
+      for (const [vendorId, ids] of byVendor) {
+        try {
+          const recs = await runtimeFor(vendorId, false).client.taskInfoMany(ids);
+          for (const t of recs) {
+            const r = db.prepare('SELECT capability, charge, refunded FROM tasks WHERE id = ?').get(String(t.id));
+            if (!r) continue;
+            const extracted = extractTaskResult(r.capability, t);
+            updateTaskRow(String(t.id), Number(t.status) || 1, extracted ?? t.result ?? null);
+            if (Number(t.status) === 9 && r.charge && !r.refunded) {
+              try { Q.refund(JSON.parse(r.charge), `平台任务 ${t.id} 失败，自动退回`); db.prepare('UPDATE tasks SET refunded = 1 WHERE id = ?').run(String(t.id)); } catch { /* ignore */ }
+            }
+          }
+        } catch { /* 单个厂商刷新失败不挡列表 */ }
+      }
+    }
+    const status = sp.get('status');
+    const capability = sp.get('capability');
+    const q = (sp.get('q') || '').trim();
+    const limit = Math.min(100, Math.max(1, Number(sp.get('limit')) || 50));
+    const offset = Math.max(0, Number(sp.get('offset')) || 0);
+    const where = ['workspace = ?']; const args = [ws];
+    if (['1', '2', '5', '9'].includes(status)) { where.push('status = ?'); args.push(Number(status)); }
+    if (capability) { where.push('capability = ?'); args.push(capability); }
+    if (q) { where.push('(id LIKE ? OR name LIKE ?)'); args.push(`%${q}%`, `%${q}%`); }
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE ${where.join(' AND ')}`).get(...args).n;
+    const rows = db.prepare(`SELECT * FROM tasks WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...args, limit, offset);
+    return { tasks: rows.map(publicTask), total };
+  }
+
+  /** 历史任务导入：浏览器本地存的任务编号（最多 50 个）向平台批量查一次，未登记的写入 tasks 表 */
+  async function opTaskImport(ctx, modeArg, ids) {
+    const mode = resolveMode(modeArg);
+    if (mode !== 'real') return { imported: 0, note: '演示环境不导入历史任务。' };
+    const ws = ctx.access.workspace;
+    const known = new Set(db.prepare('SELECT id FROM tasks WHERE workspace = ?').all(ws).map((r) => String(r.id)));
+    const fresh = [...new Set((ids || []).map(String))].filter((id) => id && !known.has(id)).slice(0, 50);
+    if (!fresh.length) return { imported: 0 };
+    const recs = await runtimeFor(ctx.access.vendorId, false).client.taskInfoMany(fresh);
+    let n = 0;
+    for (const t of recs) {
+      const extracted = extractTaskResult('', t);
+      db.prepare(`INSERT OR IGNORE INTO tasks (id, workspace, vendor_id, capability, name, status, result, charge, refunded, created_at, updated_at) VALUES (?,?,?,'',?,?,?,'',0,?,?)`)
+        .run(String(t.id), ws, ctx.access.vendorId, `历史任务 ${t.id}`, Number(t.status) || 1, extracted ? JSON.stringify(extracted) : '', Date.now(), Date.now());
+      n += 1;
+    }
+    return { imported: n };
   }
 
   function meView(ctx) {
@@ -746,6 +856,11 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       // 未登录或演示环境：只给服务端默认音色（晓悦），下拉框不至于空着
       if (mode !== 'real' || !ctx.access.canReal) return ok(res, { voices: cfg.ttsQid ? [{ qid: cfg.ttsQid, voiceName: '晓悦', materialName: '女声-甜美-晓悦', gender: 2 }] : [] });
       return ok(res, { voices: await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.voiceList() });
+    }
+    if (p === '/api/tasks' && m === 'GET') return ok(res, await opTaskList(ctx, () => modeOf(req, ctx), url.searchParams));
+    if (p === '/api/tasks/import' && m === 'POST') {
+      const { ids = [] } = await readBody(req);
+      return ok(res, await opTaskImport(ctx, () => modeOf(req, ctx), ids));
     }
     if (p === '/api/avatar' && m === 'POST') {
       const { text = '', audioUrl = '', duration = 0, imageUrl = '' } = await readBody(req);

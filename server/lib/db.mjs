@@ -61,6 +61,13 @@ const SCHEMA = [
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)`,
   `CREATE INDEX IF NOT EXISTS idx_works_user ON works(user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_works_class ON works(class_id, submitted_at)`,
+  // 任务中心：平台任务登记（创建即入库，重启不丢；列表/状态筛选/搜索的唯一来源）
+  `CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY, workspace TEXT NOT NULL, vendor_id TEXT NOT NULL, capability TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '', status INTEGER NOT NULL DEFAULT 1, result TEXT NOT NULL DEFAULT '',
+    charge TEXT NOT NULL DEFAULT '', refunded INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace, created_at)`,
 ];
 
 // 老数据库升级：CREATE TABLE IF NOT EXISTS 不会给已有的表加列，这里按需补列（幂等）

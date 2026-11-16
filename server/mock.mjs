@@ -54,6 +54,9 @@ export function createMock({ taskMs = 1400 } = {}) {
 
     task(id) { const t = tasks.get(Number(id)); return t ? view(t) : null; },
 
+    /** 演示任务列表（任务中心演示环境用）：按创建时间倒序 */
+    list() { return [...tasks.values()].sort((a, b) => b.at - a.at).map((t) => ({ ...view(t), capability: t.result?.capabilityId || '', capabilityName: t.result?.capabilityName || '', name: t.result?.title || '', createdAt: t.at })); },
+
     /** 通用能力：同步类（json/text）直接返回；异步类（video/audio/image）返回任务编号 */
     runCapability(capId, params = {}) {
       const cap = capById(capId);

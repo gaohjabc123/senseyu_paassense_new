@@ -520,6 +520,46 @@ export function tasksView(s) {
       : '你还没有登录：作品记录保存在本机浏览器，7 天后自动清除，最多保留 30 条；清除浏览器数据会一并删除。<a href="#login" data-view="login">登录</a>后保存的作品会进入账号，换电脑也不丢。'}</p></div></div>`;
 }
 
+/** 任务中心：平台任务登记列表（创建即入库，重启不丢）；状态/能力筛选、搜索、刷新、保存到作品 */
+export function taskCenterView(s) {
+  const tc = s.taskCenter;
+  const pill = (t) => t.status === 5 ? `<span class="pill pill--ok">${esc(t.statusText || '已完成')}</span>`
+    : t.status === 9 ? `<span class="pill pill--err">${esc(t.statusText || '失败')}</span>`
+    : t.status === 2 ? `<span class="pill pill--info">${esc(t.statusText || '生成中')}</span>`
+    : `<span class="pill pill--warn">${esc(t.statusText || '未开始')}</span>`;
+  const resultCell = (t) => {
+    const r = t.result;
+    if (!r) return '<span class="muted">—</span>';
+    if (r.output === 'video' && r.videoUrl) return `<a href="${esc(r.videoUrl)}" target="_blank" rel="noreferrer">查看视频${r.duration ? `（${esc(String(r.duration))} 秒）` : ''}</a>`;
+    if (r.output === 'image' && r.imageUrl) return `<a href="${esc(r.imageUrl)}" target="_blank" rel="noreferrer">查看图片</a>`;
+    if (r.output === 'audio' && r.audioUrl) return `<a href="${esc(r.audioUrl)}" target="_blank" rel="noreferrer">播放音频</a>`;
+    if (r.output === 'json' && r.json?.qid) return `<span>音色 QID <code>${esc(r.json.qid)}</code></span>`;
+    if (r.output === 'json' && r.json?.faceFeatureId) return `<span>形象 <code>${esc(r.json.faceFeatureId)}</code></span>`;
+    if (r.output === 'json') return '<span class="muted">已完成，详情见平台控制台</span>';
+    return '<span class="muted">—</span>';
+  };
+  const saveable = (t) => t.status === 5 && t.result && (t.result.videoUrl || t.result.imageUrl || t.result.audioUrl);
+  const rows = (tc.list || []).map((t) => `<tr>
+      <td><code>${esc(t.id)}</code></td><td>${esc(t.capabilityName)}</td><td>${esc(t.name || t.id)}</td><td>${pill(t)}</td>
+      <td>${new Date(t.createdAt).toLocaleString('zh-CN', { hour12: false })}</td><td>${resultCell(t)}</td>
+      <td><div class="actions actions--inline">${saveable(t) ? `<button class="btn btn--sm" type="button" data-action="taskcenter-save" data-task="${esc(t.id)}">保存到作品</button>` : ''}<button class="btn btn--sm" type="button" data-action="taskcenter-refresh-one" data-task="${esc(t.id)}">刷新</button></div></td>
+    </tr>`).join('');
+  return `<div class="console"><div class="card"><div class="card__title"><h2>任务中心</h2>
+      <button class="btn btn--sm" type="button" data-action="taskcenter-refresh" ${tc.loading ? 'disabled aria-busy="true"' : ''}>${tc.loading ? '刷新中…' : '刷新状态'}</button></div>
+    <p class="hint-block">平台任务登记：创建即入库，重启不丢。每次打开都会把未完成的任务向平台批量查一次最新状态；已完成的点「保存到作品」可进我的作品。首次打开还会把这台浏览器里存过的任务编号导入一次。</p>
+    <div class="filter-row">
+      <select class="input" data-bind="taskCenter.status" aria-label="按状态筛选">${[['all', '全部状态'], ['1', '未开始'], ['2', '生成中'], ['5', '已完成'], ['9', '失败']].map(([v, l]) => `<option value="${v}" ${tc.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select class="input" data-bind="taskCenter.cap" aria-label="按能力筛选"><option value="all" ${tc.cap === 'all' ? 'selected' : ''}>全部能力</option>${CAPABILITIES.map((c) => `<option value="${c.id}" ${tc.cap === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <input class="input" type="search" data-bind="taskCenter.q" value="${esc(tc.q || '')}" placeholder="按任务编号或任务名搜索" aria-label="按任务编号或任务名搜索" />
+      <button class="btn btn--sm" type="button" data-action="taskcenter-search">搜索</button>
+    </div>
+    ${tc.error ? errorBlock(tc.error, { retry: 'taskcenter-refresh' }) : ''}
+    ${tc.loading && !tc.list.length ? loadingBlock('正在读取任务…')
+      : tc.list.length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">任务编号</th><th scope="col">能力</th><th scope="col">任务名</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col">结果</th><th scope="col">操作</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : emptyState('还没有任务', '在创作中心或能力体验里生成一次，结果就会出现在这里。', '<a class="btn btn--primary btn--sm" href="#create" data-view="create">去创作中心</a>')}
+    <p class="hint-block">共 ${tc.total} 条${(tc.list || []).some((t) => t.status === 1 || t.status === 2) ? '；未完成的任务每 15 秒自动刷新一次状态，跑完自动停。' : '。'}</p></div></div>`;
+}
+
 export function catalogView(s) {
   const filter = s.capFilter || 'all';
   const list = filter === 'all' ? CAPABILITIES : CAPABILITIES.filter((c) => c.group === filter);
