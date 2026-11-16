@@ -229,18 +229,115 @@ export function buildLiveChannelParam(p = {}, { qid = '', faceFeatureId = '', fi
 }
 
 /** 视频互动直播装修任务（POST /api/2dvh/v1/multi-video-live/decoration-tasks） */
-export function buildDecorationTaskBody(p = {}, { faceFeatureId = '', fileId = '' } = {}) {
+/**
+ * 装修任务请求体（POST /api/2dvh/v1/multi-video-live/decoration-tasks）。
+ * 按飞书《装修脚本和接管脚本》子文档 2.1 最小可用脚本构造（2.12.0 按文档改对）：
+ * digital_role.url 与 tts_config.qid 均为必填；旧版只发了 face_feature_id 与 fileId，
+ * 按文档会被平台校验拒绝。param 为 JSON 数组字符串，每元素一份装修脚本。
+ */
+export function buildDecorationTaskBody(p = {}, { faceFeatureId = '' } = {}) {
   if (!faceFeatureId) {
     throw fail('PREREQUISITE',
       '装修任务需要已训练的数字人形象（face_feature_id），当前未配置。',
       '先用「形象复刻」训练形象，拿到 face_feature_id 后由管理员配到服务端；演示环境不受影响。', 'config');
   }
+  const qid = String(p.qid || p.qidInput || '').trim();
+  if (!qid) throw fail('INVALID_INPUT', '装修脚本需要选一个发音人（平台要求 tts_config.qid 必填）。');
+  const roleUrl = nonEmpty(p.roleUrl, '数字人模型 zip 地址');
+  if (!isHttpUrl(roleUrl)) throw fail('INVALID_INPUT', '数字人模型 zip 地址需为 http(s) 地址。');
   const script = {
     version: '0.0.1',
-    digital_role: { face_feature_id: faceFeatureId, ...(fileId ? { fileId } : {}) },
-    tts_query: { content: nonEmpty(p.script, '装修脚本文案'), ssml: false },
+    resolution: [1080, 1920],
+    bit_rate: 5,
+    sceneList: [{
+      digital_role: { face_feature_id: faceFeatureId, url: roleUrl, position: { x: 0, y: 0 }, scale: 1 },
+      tts_config: { qid, language: 'zh-CN', pitch_offset: 0, speed_ratio: 1, volume: 100 },
+      tts_query: { content: nonEmpty(p.script, '装修脚本文案'), ssml: false },
+      backgrounds: [], foregrounds: [],
+      effects: { version: '1.0', beautify: { whitenStrength: 0.3, reddenStrength: 0.36, smoothStrength: 0.74 } },
+    }],
   };
   return { name: nonEmpty(p.name, '会话名称').slice(0, 64), param: JSON.stringify([script]) };
+}
+
+/**
+ * 口水词库请求体（POST /api/2dvh/v1/material/voice/content/repository/create）。
+ * param 为 JSON 字符串：{type, desc?, digital_role?, tts_config, voice_content}。
+ * 文本与音频不可混用：填了音频地址就按音频预热（voice_content 只有 audio），
+ * 否则按文本预热（一行一句，tts_query + audio:''）；文本模式下平台要求 tts_config.qid 必填。
+ */
+export function buildContentRepoBody(p = {}, { faceFeatureId = '' } = {}) {
+  const name = nonEmpty(p.materialName, '口水词库名称').slice(0, 64);
+  const type = p.type === 'startup_script' ? 'startup_script' : 'quick_response';
+  const audioUrls = String(p.audioUrls || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  let voiceContent;
+  if (audioUrls.length) {
+    for (const u of audioUrls) if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '口水音频地址需为 http(s) 地址。');
+    voiceContent = audioUrls.map((audio) => ({ audio }));
+  } else {
+    const lines = String(p.lines || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (!lines.length) throw fail('INVALID_INPUT', '请至少写一句口水话，或填音频地址（二选一，不可混用）。');
+    voiceContent = lines.map((content) => ({ tts_query: { content, ssml: false }, audio: '' }));
+  }
+  const ttsConfig = {
+    pitch_offset: clampNum(p.pitch, 0, -60, 60) ?? 0,
+    speed_ratio: clampNum(p.speed, 1, 0.5, 2) ?? 1,
+    volume: clampInt(p.volume, 100, 1, 400) ?? 100,
+  };
+  if (!audioUrls.length) {
+    const qid = String(p.qid || p.qidInput || '').trim();
+    if (!qid) throw fail('INVALID_INPUT', '文本模式需要选一个发音人（平台要求有文本时 QID 必填）。');
+    ttsConfig.qid = qid;
+  }
+  const param = {
+    type,
+    ...(p.desc ? { desc: String(p.desc).slice(0, 200) } : {}),
+    tts_config: ttsConfig,
+    voice_content: voiceContent,
+  };
+  if (p.useRole === '开启') {
+    if (!faceFeatureId) throw fail('PREREQUISITE', '关联数字人需要已训练的形象（face_feature_id），当前未配置。',
+      '先用「形象复刻」训练形象，拿到 face_feature_id 后由管理员配到服务端；不关联也可以直接创建。', 'config');
+    param.digital_role = { face_feature_id: faceFeatureId, name: nonEmpty(p.roleName, '数字人名称').slice(0, 64) };
+  }
+  return { materialName: name, param: JSON.stringify(param) };
+}
+
+/**
+ * 预热素材请求体（POST /api/2dvh/v1/material/file/warming）。
+ * 文档原文：param 表格称“预热内容数组”，但请求样例解码后是单个对象，按样例发对象。
+ */
+export function buildWarmingBody(p = {}) {
+  const fileId = nonEmpty(p.fileId, '素材文件 ID');
+  const fileUrl = nonEmpty(p.fileUrl, '素材文件地址');
+  if (!isHttpUrl(fileUrl)) throw fail('INVALID_INPUT', '素材文件地址需为 http(s) 地址。');
+  const zid = nonEmpty(p.zid, 'zip 素材文件 ID');
+  const md5 = nonEmpty(p.md5, 'zip 素材文件 MD5');
+  return { materialName: nonEmpty(p.materialName, '预热任务名称').slice(0, 64), param: JSON.stringify({ fileId, fileUrl, zid, md5 }) };
+}
+
+/**
+ * 视频转码请求体（POST /api/2dvh/v1/material/file/transcode）。
+ * param 为 JSON 数组字符串，每项只有 fileUrl；平台不支持取消与重新生成。
+ */
+export function buildTranscodeBody(p = {}) {
+  const urls = String(p.fileUrls || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (!urls.length) throw fail('INVALID_INPUT', '请至少填一个视频文件地址。');
+  for (const u of urls) if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '视频文件地址需为 http(s) 地址。');
+  return { materialName: nonEmpty(p.materialName, '转码任务名称').slice(0, 64), param: JSON.stringify(urls.map((fileUrl) => ({ fileUrl }))) };
+}
+
+/**
+ * 过渡视频预处理请求体（POST /api/2dvh/v1/multi-video-live/transition-transcode-tasks）。
+ * param 为 JSON 数组字符串，每项 {url, materialId}；materialId 只能用英文字母、数字、
+ * 下划线、加号、减号，同一账号下重复会让整个请求失败。
+ */
+export function buildTransitionBody(p = {}) {
+  const url = nonEmpty(p.url, '过渡视频地址');
+  if (!isHttpUrl(url)) throw fail('INVALID_INPUT', '过渡视频地址需为 http(s) 地址。');
+  const materialId = nonEmpty(p.materialId, '素材 ID');
+  if (!/^[A-Za-z0-9_+-]+$/.test(materialId)) throw fail('INVALID_INPUT', '素材 ID 只能用英文字母、数字、下划线、加号、减号。');
+  return { name: nonEmpty(p.name, '任务名称').slice(0, 64), param: JSON.stringify([{ url, materialId }]) };
 }
 
 /**

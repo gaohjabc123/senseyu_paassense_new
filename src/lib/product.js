@@ -9,7 +9,7 @@ export const PRODUCT = {
   vendor: '商予科技',
   version: VERSION,
   tagline: '把数字人能力，变成你的产品能力',
-  description: '面向客户与合作方的数字人 PaaS 能力门户：在线体验 6 大类 15 项能力，查看接入路径，演示与真实环境一键切换。',
+  description: '面向客户与合作方的数字人 PaaS 能力门户：在线体验 6 大类 21 项能力，查看接入路径，演示与真实环境一键切换。',
   docsUrl: 'https://senseavatar.feishu.cn/wiki/space/7652622993675324361',
   consoleUrl: 'https://aigc.softsugar.com/#/company/nav',
 };

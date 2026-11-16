@@ -212,6 +212,10 @@ main:focus { outline: none; }
 
 /* 创作中心 */
 .create-tabs { display: flex; gap: 8px; margin-bottom: var(--sp-4); border-bottom: 1px solid var(--gray-200); padding-bottom: 12px; overflow-x: auto; }
+.cap-group { margin-top: var(--sp-4); }
+.cap-group:first-of-type { margin-top: var(--sp-2); }
+.cap-group h3 { font-size: 14px; margin: 0 0 8px; }
+.cap-group .cap-pill[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
 .create-tab { padding: 9px 18px; border: 1px solid transparent; border-radius: var(--radius-sm); background: #fff; color: var(--gray-600); font-size: 13px; font-weight: 550; white-space: nowrap; }
 .create-tab:hover { background: var(--gray-50); }
 .create-tab.is-active { background: var(--brand-50); border-color: var(--brand-100); color: var(--brand-700); font-weight: 650; }

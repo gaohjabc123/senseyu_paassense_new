@@ -99,9 +99,14 @@ test('直播：未配置形象时报前置条件，不让平台报含糊的错',
   assert.equal(p.sceneList[0].digital_role.fileId, 'file_9');
   assert.equal(p.sceneList[0].tts_query.content, '欢迎来到直播间。');
   assert.throws(() => buildDecorationTaskBody({ name: '发布会', script: '你好。' }, {}), /face_feature_id/);
-  const d = buildDecorationTaskBody({ name: '发布会', script: '你好。' }, { faceFeatureId: 'ff_1' });
+  const d = buildDecorationTaskBody({ name: '发布会', script: '你好。', qid: 'qid-test', roleUrl: 'https://cdn.invalid/role.zip' }, { faceFeatureId: 'ff_1' });
   assert.equal(d.name, '发布会');
-  assert.equal(JSON.parse(d.param)[0].tts_query.content, '你好。');
+  const dScene = JSON.parse(d.param)[0].sceneList[0];
+  assert.equal(dScene.tts_query.content, '你好。');
+  assert.equal(dScene.digital_role.face_feature_id, 'ff_1');
+  assert.equal(dScene.digital_role.url, 'https://cdn.invalid/role.zip');
+  assert.equal(dScene.tts_config.qid, 'qid-test');
+  assert.throws(() => buildDecorationTaskBody({ name: '发布会', script: '你好。', roleUrl: 'https://cdn.invalid/role.zip' }, { faceFeatureId: 'ff_1' }), /发音人/);
 });
 
 test('任务结果提取：视频带 output，图片提 imageUrl，复刻提 QID，未完成返回 null', () => {

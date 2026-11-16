@@ -17,7 +17,7 @@ import { TokenManager } from './lib/token.mjs';
 import { createRuyingClient, normalizeDuration, TASK_STATUS_TEXT } from './lib/ruying.mjs';
 import { KbStore } from './lib/kb.mjs';
 import { answerQuestion, completeDeepSeek } from './lib/answer.mjs';
-import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveChannelParam, buildDecorationTaskBody, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
+import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveChannelParam, buildDecorationTaskBody, buildContentRepoBody, buildWarmingBody, buildTranscodeBody, buildTransitionBody, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
 import { maskValue, redactText } from './lib/mask.mjs';
 import { AppError, E, toAppError, errorBody } from './lib/errors.mjs';
 import { openDb } from './lib/db.mjs';
@@ -266,6 +266,12 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
    *   nlp-chat：平台无接口；服务端自建检索 + 大模型回答
    *   live-script / live-pro：创建直播间（创建即开始计时；需已训练并预热的形象）
    *   live-multi：创建装修任务（第一步；直播创建是第二步，需 FINISHED 素材与并发路数）
+   *   live-wordbank：口水词库（内容预热；异步任务，登记进任务中心）
+   *   live-warming：预热素材上传（FileId 预热；异步任务，登记进任务中心）
+   *   live-transcode：视频转码（异步任务，登记进任务中心）
+   *   live-decorate：直播间装修（创建装修任务；异步任务，登记进任务中心）
+   *   live-transition：过渡视频预处理（异步任务，登记进任务中心）
+   *   avatar-terminal：平台未开放接口，不调平台，直接返回说明（不产生任务、不扣额度）
    */
   async function opCapability(ctx, modeArg, id, params = {}, wsOf) {
     const cap = capById(id);
@@ -421,9 +427,37 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         return syncJson(json, '直播间已创建，开始计时；尚未开播。开播需调 start 接口并每 60 秒发送心跳；不发送心跳会在阈值后被动关闭。');
       }
       if (cap.id === 'live-multi') {
-        const body = buildDecorationTaskBody(params, { faceFeatureId: cfg.liveFaceFeatureId, fileId: cfg.liveFileId });
+        const body = buildDecorationTaskBody(params, { faceFeatureId: cfg.liveFaceFeatureId });
         const taskId = await client.createDecorationTask(body);
         return syncJson({ decorationTaskId: taskId, statusQuery: `GET /api/2dvh/v1/multi-video-live/decoration-tasks/${taskId}`, next: '子素材状态 FINISHED 后，才能用 materialId 创建直播（需推流 RTMP 地址与播放列表）。' }, '装修任务已创建；直播创建是第二步，需要 FINISHED 素材与可用并发路数。');
+      }
+      if (cap.id === 'live-wordbank') {
+        const body = buildContentRepoBody(params, { faceFeatureId: cfg.liveFaceFeatureId });
+        const taskId = await client.createContentRepo(body);
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'live-warming') {
+        const body = buildWarmingBody(params);
+        const taskId = await client.warmFile(body);
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'live-transcode') {
+        const body = buildTranscodeBody(params);
+        const taskId = await client.transcodeFile(body);
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'live-decorate') {
+        const body = buildDecorationTaskBody(params, { faceFeatureId: cfg.liveFaceFeatureId });
+        const taskId = await client.createDecorationTask(body);
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'live-transition') {
+        const body = buildTransitionBody(params);
+        const taskId = await client.createTransitionTask(body);
+        return registerTask(taskId, 'json');
+      }
+      if (cap.id === 'avatar-terminal') {
+        return syncJson({ available: false, reason: '平台未开放终端模型转换接口', ...(params.modelName ? { modelName: String(params.modelName).slice(0, 64) } : {}), alternative: '如需生成人物模型，请用「形象复刻」（avatar-train）。', doc: '飞书《人物形象模型生成》文档无此接口，仅附录有状态枚举。' }, '平台没有这个接口，本次没有调用平台、不扣额度。');
       }
       // 未覆盖的能力：仍按旧口径返回演示结果并如实说明
       const r = MOCK.runCapability(id, params);

@@ -132,7 +132,7 @@ export function homeView(s) {
 
     <section class="section">
       <div class="section__head"><div><h2>一套 API，覆盖数字人内容生产全链路</h2>
-        <p>6 大类 15 项能力：从形象、音色到成片、互动，可单独调用，也可组合集成。</p></div>
+        <p>6 大类 21 项能力：从形象、音色到成片、互动，可单独调用，也可组合集成。</p></div>
         <a class="btn" href="#capabilities" data-view="capabilities">全部能力</a></div>
       <div class="cap-grid">${GROUPS.map((g) => `<button class="cap-card" type="button" data-group="${g.id}" style="--accent:${g.accent}">
           <span class="cap-card__icon" aria-hidden="true">${g.icon}</span>
@@ -376,11 +376,19 @@ function worksTable(list, { withDelete = false, canSubmit = false } = {}) {
 
 export function createView(s) {
   const tabs = EXPERIENCES.filter((e) => canUse(s, SHORTCUT_MODULE[e.id]));
-  if (!tabs.length) return `<div class="console"><div class="card">${emptyState('创作中心没有可用的能力', '你的企业没有开通视频口播、语音合成或知识库问答。可以在能力目录里查看已开通的能力。', '<a class="btn btn--primary btn--sm" href="#catalog" data-view="catalog">打开能力目录</a>')}</div></div>`;
+  const allCaps = `<div class="card"><div class="card__title"><h2>全部能力</h2><span class="pill pill--info">${CAPABILITIES.length} 项</span></div>
+    <p class="muted">上面三个是常用的快捷入口；下面是全部能力，按大类列出，点一下直接去体验。</p>
+    ${GROUPS.map((g) => `<div class="cap-group"><h3>${esc(g.icon)} ${esc(g.name)}</h3>
+      <div class="scene-row__caps">${capsOf(g.id).map((c) => canUse(s, c.id)
+        ? `<button class="cap-pill" type="button" data-use="${c.id}">${esc(c.name)}<small>${OUTPUT_LABEL[c.experience?.output] || '文本'}</small></button>`
+        : `<span class="cap-pill" aria-disabled="true" title="你的企业未开通这项能力">${esc(c.name)}<small>未开通</small></span>`).join('')}</div></div>`).join('')}
+  </div>`;
+  if (!tabs.length) return `<div class="console"><div class="card">${emptyState('创作中心没有可用的快捷入口', '你的企业没有开通视频口播、语音合成或知识库问答。可以在下面或能力目录里查看已开通的能力。', '<a class="btn btn--primary btn--sm" href="#catalog" data-view="catalog">打开能力目录</a>')}</div>${allCaps}</div>`;
   const active = tabs.some((e) => e.id === s.createTab) ? s.createTab : tabs[0].id;
   return `<div class="console">
     <div class="create-tabs" role="tablist" aria-label="创作类型">${tabs.map((e) => `<button class="create-tab ${active === e.id ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active === e.id}" data-create="${e.id}"><span aria-hidden="true">${e.icon}</span> ${esc(e.name)}</button>`).join('')}</div>
     <div role="tabpanel">${active === 'video' ? videoPanel(s) : active === 'voice' ? voicePanel(s) : kbPanel(s)}</div>
+    ${allCaps}
   </div>`;
 }
 

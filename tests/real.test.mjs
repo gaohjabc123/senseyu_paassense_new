@@ -69,6 +69,10 @@ async function fakeFetch(url, init = {}) {
     case '/api/2dvh/v1/material/2davatar/model/green/segment/video/create': return ok(9202);
     case '/api/2dvh/v2/material/live/channel/create': return ok({ sessionId: 'sess_test_1', sessionToken: 'tok', status: 35, pullRtmpUrl: 'rtmp://cdn.invalid/live', pullFlvUrl: 'https://cdn.invalid/live.flv', pullHlsUrl: 'https://cdn.invalid/live.m3u8' });
     case '/api/2dvh/v1/multi-video-live/decoration-tasks': return ok(55001);
+    case '/api/2dvh/v1/material/voice/content/repository/create': return ok(88001);
+    case '/api/2dvh/v1/material/file/warming': return ok(88002);
+    case '/api/2dvh/v1/material/file/transcode': return ok(88003);
+    case '/api/2dvh/v1/multi-video-live/transition-transcode-tasks': return ok(88004);
     case '/api/2dvh/v1/task/info': {
       const id = body?.ids?.[0];
       const rec = TASK_RESULTS[id] || { id, status: 5, productParam: JSON.stringify({}) };
@@ -78,7 +82,7 @@ async function fakeFetch(url, init = {}) {
   }
 }
 
-const ALL = ['video-tts', 'video-image', 'video-script', 'voice-tts', 'voice-clone', 'voice-nlp', 'avatar-train', 'avatar-green', 'avatar-update', 'image-edit', 'nlp-kb', 'nlp-chat', 'live-script', 'live-pro', 'live-multi'];
+const ALL = ['video-tts', 'video-image', 'video-script', 'voice-tts', 'voice-clone', 'voice-nlp', 'avatar-train', 'avatar-green', 'avatar-update', 'image-edit', 'nlp-kb', 'nlp-chat', 'live-script', 'live-pro', 'live-multi', 'live-wordbank', 'live-warming', 'live-transcode', 'live-decorate', 'live-transition', 'avatar-terminal'];
 let srv, s, sup;
 before(async () => {
   srv = await startServer({
@@ -229,7 +233,7 @@ test('知识库问答（真实模式）：命中时由 DeepSeek 流式作答，�
   assert.ok(!calls.some((c) => c.host === 'deepseek.invalid'), '无命中时不应调用大模型');
 });
 
-/* ---------- 2.6.0 真实链路：全部 15 项能力 ---------- */
+/* ---------- 2.6.0 真实链路：全部 21 项能力 ---------- */
 
 test('文本驱动视频合成：真实模式走 TTS + 默认形象图，返回视频任务（不再原样 POST {text}）', async () => {
   calls.length = 0;
@@ -419,13 +423,115 @@ test('互动直播与超级直播间：创建直播间返回会话编号与拉�
 
 test('视频互动直播：创建装修任务返回父任务 id', async () => {
   calls.length = 0;
-  const r = await s.post('/api/capability/run', { id: 'live-multi', params: { name: '产品发布会', script: '您好，欢迎来到直播间。' } }, 'real');
+  const r = await s.post('/api/capability/run', { id: 'live-multi', params: { name: '产品发布会', script: '您好，欢迎来到直播间。', qid: 'qid-a', roleUrl: 'https://cdn.invalid/role.zip' } }, 'real');
   assert.equal(r.code, 0, r.message);
   const req = calls.find((c) => c.path === '/api/2dvh/v1/multi-video-live/decoration-tasks');
   assert.ok(req);
   assert.equal(req.body.name, '产品发布会');
-  assert.equal(JSON.parse(req.body.param)[0].tts_query.content, '您好，欢迎来到直播间。');
+  const p = JSON.parse(req.body.param)[0];
+  const scene = p.sceneList[0];
+  assert.equal(scene.tts_query.content, '您好，欢迎来到直播间。');
+  assert.equal(scene.digital_role.face_feature_id, 'ff_test_1');
+  assert.equal(scene.digital_role.url, 'https://cdn.invalid/role.zip');
+  assert.equal(scene.tts_config.qid, 'qid-a');
+  assert.deepEqual(p.resolution, [1080, 1920]);
   assert.equal(r.data.result.json.decorationTaskId, '55001');
+});
+
+/* ---------- 2.12.0：补齐 6 个缺的能力 + 装修脚本按文档改对 ---------- */
+
+test('口水词库：文本模式请求体按文档构造，任务登记进任务中心', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'live-wordbank', params: { materialName: '直播口水话', type: 'quick_response', qid: 'qid-a', lines: '感谢你的提问。\n好的，请稍等。', audioUrls: '', useRole: '关闭' } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.sync, false);
+  assert.equal(r.data.taskId, '88001');
+  const req = calls.find((c) => c.path === '/api/2dvh/v1/material/voice/content/repository/create');
+  assert.ok(req, '应调内容预热接口');
+  assert.equal(req.body.materialName, '直播口水话');
+  const p = JSON.parse(req.body.param);
+  assert.equal(p.type, 'quick_response');
+  assert.equal(p.tts_config.qid, 'qid-a');
+  assert.equal(p.voice_content.length, 2);
+  assert.equal(p.voice_content[0].tts_query.content, '感谢你的提问。');
+  assert.equal(p.voice_content[0].audio, '');
+  const t = await pollUntilDone(s, '/api/capability/task', r.data.taskId, 'real');
+  assert.equal(t.data.status, 5);
+  assert.equal(t.data.result.output, 'json');
+});
+
+test('口水词库：音频模式只发 audio，文本模式缺 QID 时报可读错误', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'live-wordbank', params: { materialName: '开播脚本', type: 'startup_script', audioUrls: 'https://cdn.invalid/a.mp3' } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  const req = calls.find((c) => c.path === '/api/2dvh/v1/material/voice/content/repository/create');
+  const p = JSON.parse(req.body.param);
+  assert.equal(p.type, 'startup_script');
+  assert.deepEqual(p.voice_content, [{ audio: 'https://cdn.invalid/a.mp3' }]);
+  assert.ok(!('qid' in p.tts_config), '音频模式不应发 QID');
+  const bad = await s.post('/api/capability/run', { id: 'live-wordbank', params: { materialName: '口水话', type: 'quick_response', lines: '你好' } }, 'real');
+  assert.notEqual(bad.code, 0);
+  assert.match(bad.message, /发音人/);
+});
+
+test('预热素材：param 按文档样例发单个对象（非数组）', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'live-warming', params: { materialName: '场景预热', fileId: 'f1', fileUrl: 'https://cdn.invalid/x.zip', zid: 'z1', md5: 'm1' } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.taskId, '88002');
+  const req = calls.find((c) => c.path === '/api/2dvh/v1/material/file/warming');
+  assert.ok(req, '应调 FileId 预热接口');
+  const p = JSON.parse(req.body.param);
+  assert.equal(p.fileId, 'f1');
+  assert.equal(p.fileUrl, 'https://cdn.invalid/x.zip');
+  assert.equal(p.zid, 'z1');
+  assert.equal(p.md5, 'm1');
+});
+
+test('视频转码：param 为 fileUrl 数组，任务登记进任务中心', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'live-transcode', params: { materialName: '视频转码', fileUrls: 'https://cdn.invalid/a.mp4\nhttps://cdn.invalid/b.mp4' } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.taskId, '88003');
+  const req = calls.find((c) => c.path === '/api/2dvh/v1/material/file/transcode');
+  assert.ok(req, '应调素材转码接口');
+  assert.deepEqual(JSON.parse(req.body.param), [{ fileUrl: 'https://cdn.invalid/a.mp4' }, { fileUrl: 'https://cdn.invalid/b.mp4' }]);
+});
+
+test('直播间装修：独立能力创建装修任务，请求体与 live-multi 同口径', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'live-decorate', params: { name: '直播间装修', script: '您好，欢迎来到直播间。', qid: 'qid-a', roleUrl: 'https://cdn.invalid/role.zip' } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.sync, false);
+  assert.equal(r.data.taskId, '55001');
+  const req = calls.find((c) => c.path === '/api/2dvh/v1/multi-video-live/decoration-tasks');
+  const p = JSON.parse(req.body.param)[0];
+  const scene = p.sceneList[0];
+  assert.equal(scene.digital_role.url, 'https://cdn.invalid/role.zip');
+  assert.equal(scene.tts_config.qid, 'qid-a');
+});
+
+test('过渡视频预处理：param 为 url + materialId 数组，非法素材 ID 报可读错误', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'live-transition', params: { name: '过渡视频预处理', url: 'https://cdn.invalid/a.mp4', materialId: 'material-a' } }, 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.taskId, '88004');
+  const req = calls.find((c) => c.path === '/api/2dvh/v1/multi-video-live/transition-transcode-tasks');
+  assert.ok(req, '应调过渡视频预处理接口');
+  assert.deepEqual(JSON.parse(req.body.param), [{ url: 'https://cdn.invalid/a.mp4', materialId: 'material-a' }]);
+  const bad = await s.post('/api/capability/run', { id: 'live-transition', params: { name: '过渡', url: 'https://cdn.invalid/a.mp4', materialId: 'a b' } }, 'real');
+  assert.notEqual(bad.code, 0);
+  assert.match(bad.message, /素材 ID/);
+});
+
+test('终端模型转换：平台无接口，不调平台、不产生任务、不扣额度', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/capability/run', { id: 'avatar-terminal', params: {} }, 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.sync, true);
+  assert.equal(r.data.result.json.available, false);
+  assert.match(r.data.result.json.reason, /未开放/);
+  assert.equal(calls.length, 0, '不应发出任何平台调用');
 });
 
 test('厂商额度预检：图片数字人额度超支时报明确的错，不再让平台回“系统内部错误”', async () => {

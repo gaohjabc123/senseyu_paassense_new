@@ -42,6 +42,11 @@ export const PLATFORM = {
   liveHeartbeat: { path: '/api/2dvh/v1/material/live/channel/heartbeat' },
   liveCommand: { path: '/api/2dvh/v2/material/live/channel/command' },
   decorationCreate: { path: '/api/2dvh/v1/multi-video-live/decoration-tasks' },
+  // 以下为 2.12.0 新增（6 个缺的能力）：请求体由 server/lib/realcap.mjs 按飞书文档构造
+  contentRepoCreate: { path: '/api/2dvh/v1/material/voice/content/repository/create' },
+  fileWarmingCreate: { path: '/api/2dvh/v1/material/file/warming' },
+  fileTranscode: { path: '/api/2dvh/v1/material/file/transcode' },
+  transitionCreate: { path: '/api/2dvh/v1/multi-video-live/transition-transcode-tasks' },
   multiChannelCreate: { path: '/api/2dvh/v1/multi-video-live/channel/create' },
   multiChannelStart: { path: '/api/2dvh/v1/multi-video-live/channel/start' },
   multiHeartbeat: { path: '/api/2dvh/v1/live/video-interactive/channel/heartbeat' },
@@ -352,6 +357,30 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
     /** 视频互动直播：查询装修任务状态（GET） */
     async decorationTaskStatus(id) {
       return get(`${PLATFORM.decorationCreate.path}/${encodeURIComponent(id)}`);
+    },
+
+    /** 口水词库：创建内容预热（快速问答库），返回任务编号 */
+    async createContentRepo(body) {
+      const data = await post(PLATFORM.contentRepoCreate.path, body, { billable: true });
+      return taskIdOf(data, '口水词库');
+    },
+
+    /** 预热素材：提交 FileId 预热，返回任务编号 */
+    async warmFile(body) {
+      const data = await post(PLATFORM.fileWarmingCreate.path, body, { billable: true });
+      return taskIdOf(data, '预热素材');
+    },
+
+    /** 视频转码：提交转码任务，返回任务编号 */
+    async transcodeFile(body) {
+      const data = await post(PLATFORM.fileTranscode.path, body, { billable: true });
+      return taskIdOf(data, '视频转码');
+    },
+
+    /** 过渡视频预处理：提交预处理任务，返回父任务编号 */
+    async createTransitionTask(body) {
+      const data = await post(PLATFORM.transitionCreate.path, body, { billable: true });
+      return taskIdOf(data, '过渡视频预处理');
     },
 
     /** 视频互动直播：创建直播任务，返回会话信息 */
