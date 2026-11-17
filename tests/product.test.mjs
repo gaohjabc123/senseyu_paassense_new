@@ -116,3 +116,10 @@ test('批量导入名单解析：逗号 / 中文逗号 / 制表符，跳过表�
   ]);
   assert.deepEqual(parseRoster('  \n'), []);
 });
+
+test('导航去重：能力目录已并进能力矩阵', () => {
+  const ids = NAV_SECTIONS.flatMap((sec) => sec.items.map((i) => i.id));
+  assert.ok(!ids.includes('catalog'), '导航里不应再有能力目录');
+  assert.ok(ids.includes('capabilities'), '能力矩阵仍在导航里');
+  assert.equal(navById('catalog'), undefined, '旧的 catalog 路由不应再被识别为导航项');
+});

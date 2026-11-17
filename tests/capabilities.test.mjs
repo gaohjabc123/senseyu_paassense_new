@@ -208,3 +208,16 @@ test('任务中心：列表页含状态/能力筛选、搜索、结果链接与�
   assert.ok(html.includes('data-action="taskcenter-save"'), '已完成任务须有保存到作品按钮');
   assert.equal((html.match(/data-action="taskcenter-save"/g) || []).length, 1, '未完成的任务不应出现保存按钮');
 });
+
+test('去重：能力矩阵是唯一浏览入口（推荐顺序并进来），创作中心不再重复列胶囊', async () => {
+  const { capabilitiesView, createView, sidenav } = await import('../src/lib/views.js');
+  const matrix = capabilitiesView({ capFilter: 'all' });
+  assert.ok(matrix.includes('推荐上手顺序'), '推荐上手顺序应并进能力矩阵');
+  assert.ok(matrix.includes('cap-table') && matrix.includes('能力矩阵'), '能力矩阵须有完整表格');
+  assert.ok(!capabilitiesView({ capFilter: 'video' }).includes('推荐上手顺序'), '按大类筛选时不显示推荐顺序');
+  const create = createView({}); // 无可用快捷入口，走空态分支
+  assert.ok(!create.includes('cap-pill'), '创作中心不应再重复列全部能力胶囊');
+  assert.ok(create.includes('href="#capabilities"'), '创作中心应链向能力矩阵');
+  const nav = sidenav({ view: 'home', me: null, works: [] });
+  assert.ok(nav.includes('data-view="capabilities"') && !nav.includes('data-view="catalog"'), '侧边栏只留能力矩阵，不留能力目录');
+});

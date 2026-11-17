@@ -105,7 +105,7 @@ export function experienceView(s, cap) {
   }).join('');
 
   return `<div class="console exp-shell">
-    <nav class="exp-crumb" aria-label="位置"><a href="#catalog" data-view="catalog">能力目录</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
+    <nav class="exp-crumb" aria-label="位置"><a href="#capabilities" data-view="capabilities">能力矩阵</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
     ${requiresCard(ex, s.config)}
     <div class="grid-2 exp-grid">
       <div class="card"><div class="card__title"><h2>${esc(ex.dialogTitle || '填写参数')}</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>

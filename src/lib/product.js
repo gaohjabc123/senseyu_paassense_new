@@ -41,7 +41,6 @@ export const NAV_SECTIONS = [
       { id: 'create', label: '创作中心', icon: '✦' },
       { id: 'taskcenter', label: '任务中心', icon: '☰' },
       { id: 'tasks', label: '我的作品', icon: '▤' },
-      { id: 'catalog', label: '能力目录', icon: '◈' },
       { id: 'settings', label: '环境与配置', icon: '⚙' },
     ],
   },

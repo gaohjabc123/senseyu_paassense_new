@@ -198,10 +198,13 @@ function filterRow(filter) {
 export function capabilitiesView(s) {
   const filter = s.capFilter || 'all';
   const list = filter === 'all' ? CAPABILITIES : CAPABILITIES.filter((c) => c.group === filter);
+  // 推荐上手顺序原先在能力目录里：能力目录与能力矩阵是同一张表，已合并，入口只剩能力矩阵
+  const guided = filter === 'all' ? `<div class="card guided-path"><div class="card__title"><h2>推荐上手顺序</h2><span class="pill pill--info">第一次用，按这个顺序走</span></div>
+    <ol class="steps-grid">${GUIDED_PATH.map((step, i) => { const c = capById(step.cap); return `<li class="step-card"><span class="step-card__n" aria-hidden="true">${i + 1}</span><h3>${esc(c?.name || step.cap)}</h3><p>${esc(step.why)}</p>${c ? `<button class="btn btn--sm btn--primary" type="button" data-use="${c.id}">去体验</button>` : ''}</li>`; }).join('')}</ol></div>` : '';
   return `<div class="site site--inner">
     <div class="page-head"><h1>能力矩阵</h1>
       <p>平台全部能力的索引：所属大类、输出类型、对应接口与需要准备的东西。每一项都可以在工作台在线体验。</p></div>
-    <div class="page-body">${filterRow(filter)}${capTable(list, s)}
+    <div class="page-body">${guided}${filterRow(filter)}${capTable(list, s)}
     <p class="hint-block">能力口径依据如影平台官方产品文档整理。演示环境返回本地样例，真实环境的可用范围以你的平台账号开通情况为准。</p></div>
   </div>`;
 }
@@ -253,7 +256,7 @@ export function integrationView() {
 
 /* ============ 内容区：工作台 ============ */
 export function sidenav(s) {
-  const active = s.view.startsWith('admin/tenant') ? 'admin/tenants' : s.view === 'experience' ? 'catalog' : s.view;
+  const active = s.view.startsWith('admin/tenant') ? 'admin/tenants' : s.view === 'experience' ? 'capabilities' : s.view;
   return `<nav class="sidenav" aria-label="工作台">${navFor(s.me?.user?.role, { isSchool: !!s.me?.teaching?.isSchool }).map((sec) => `
     <div class="nav-group"><div class="nav-group__label" aria-hidden="true">${sec.label}</div>
       ${sec.items.map((it) => `<a class="nav-item ${active === it.id ? 'is-active' : ''}" href="#${it.id}" data-view="${it.id}" ${active === it.id ? 'aria-current="page"' : ''}>
@@ -376,14 +379,11 @@ function worksTable(list, { withDelete = false, canSubmit = false } = {}) {
 
 export function createView(s) {
   const tabs = EXPERIENCES.filter((e) => canUse(s, SHORTCUT_MODULE[e.id]));
+  // 全部能力不再这里重复列一遍胶囊：能力矩阵是唯一的浏览入口，这里只留一个跳转
   const allCaps = `<div class="card"><div class="card__title"><h2>全部能力</h2><span class="pill pill--info">${CAPABILITIES.length} 项</span></div>
-    <p class="muted">上面三个是常用的快捷入口；下面是全部能力，按大类列出，点一下直接去体验。</p>
-    ${GROUPS.map((g) => `<div class="cap-group"><h3>${esc(g.icon)} ${esc(g.name)}</h3>
-      <div class="scene-row__caps">${capsOf(g.id).map((c) => canUse(s, c.id)
-        ? `<button class="cap-pill" type="button" data-use="${c.id}">${esc(c.name)}<small>${OUTPUT_LABEL[c.experience?.output] || '文本'}</small></button>`
-        : `<span class="cap-pill" aria-disabled="true" title="你的企业未开通这项能力">${esc(c.name)}<small>未开通</small></span>`).join('')}</div></div>`).join('')}
-  </div>`;
-  if (!tabs.length) return `<div class="console"><div class="card">${emptyState('创作中心没有可用的快捷入口', '你的企业没有开通视频口播、语音合成或知识库问答。可以在下面或能力目录里查看已开通的能力。', '<a class="btn btn--primary btn--sm" href="#catalog" data-view="catalog">打开能力目录</a>')}</div>${allCaps}</div>`;
+    <p class="muted">上面三个是常用的快捷入口；全部 ${CAPABILITIES.length} 项能力按 6 大类列在能力矩阵里，点一下直接去体验。</p>
+    <a class="btn btn--primary btn--sm" href="#capabilities" data-view="capabilities">去能力矩阵查看全部 ${CAPABILITIES.length} 项能力</a></div>`;
+  if (!tabs.length) return `<div class="console"><div class="card">${emptyState('创作中心没有可用的快捷入口', '你的企业没有开通视频口播、语音合成或知识库问答。可以在能力矩阵里查看已开通的能力。', '<a class="btn btn--primary btn--sm" href="#capabilities" data-view="capabilities">打开能力矩阵</a>')}</div>${allCaps}</div>`;
   const active = tabs.some((e) => e.id === s.createTab) ? s.createTab : tabs[0].id;
   return `<div class="console">
     <div class="create-tabs" role="tablist" aria-label="创作类型">${tabs.map((e) => `<button class="create-tab ${active === e.id ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active === e.id}" data-create="${e.id}"><span aria-hidden="true">${e.icon}</span> ${esc(e.name)}</button>`).join('')}</div>
@@ -566,15 +566,6 @@ export function taskCenterView(s) {
       : tc.list.length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">任务编号</th><th scope="col">能力</th><th scope="col">任务名</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col">结果</th><th scope="col">操作</th></tr></thead><tbody>${rows}</tbody></table></div>`
       : emptyState('还没有任务', '在创作中心或能力体验里生成一次，结果就会出现在这里。', '<a class="btn btn--primary btn--sm" href="#create" data-view="create">去创作中心</a>')}
     <p class="hint-block">共 ${tc.total} 条${(tc.list || []).some((t) => t.status === 1 || t.status === 2) ? '；未完成的任务每 15 秒自动刷新一次状态，跑完自动停。' : '。'}</p></div></div>`;
-}
-
-export function catalogView(s) {
-  const filter = s.capFilter || 'all';
-  const list = filter === 'all' ? CAPABILITIES : CAPABILITIES.filter((c) => c.group === filter);
-  const guided = filter === 'all' ? `<div class="card guided-path"><div class="card__title"><h2>推荐上手顺序</h2><span class="pill pill--info">第一次用，按这个顺序走</span></div>
-    <ol class="steps-grid">${GUIDED_PATH.map((step, i) => { const c = capById(step.cap); return `<li class="step-card"><span class="step-card__n" aria-hidden="true">${i + 1}</span><h3>${esc(c?.name || step.cap)}</h3><p>${esc(step.why)}</p>${c ? `<button class="btn btn--sm btn--primary" type="button" data-use="${c.id}">去体验</button>` : ''}</li>`; }).join('')}</ol></div>` : '';
-  return `<div class="console">${guided}${filterRow(filter)}${capTable(list, s)}
-    ${s.me?.access?.kind === 'tenant' ? `<p class="hint-block">已开通 ${allowedModules(s).length} / ${CAPABILITIES.length} 项能力；未开通的能力请联系企业管理员或商予科技。</p>` : ''}</div>`;
 }
 
 export function settingsView(s) {

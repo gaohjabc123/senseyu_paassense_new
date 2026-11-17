@@ -70,9 +70,11 @@ function updateTopbar() {
 
 /* ================= 渲染：只更新内容区 ================= */
 const adminTitle = (v) => { const r = ADMIN_ROUTES[v]; return r ? (state.me?.teaching?.isSchool && r.schoolTitle) || r.title : ''; };
-const CONSOLE_TITLE = { overview: '工作台总览', create: '创作中心', taskcenter: '任务中心', tasks: '我的作品', catalog: '能力目录', settings: '环境与配置', experience: '能力体验' };
-const isSiteLayout = (v) => SITE_VIEWS.includes(v) || v === 'login';
-const isWorkspace = (v) => ['overview', 'create', 'taskcenter', 'tasks', 'catalog', 'settings', 'experience'].includes(v);
+const CONSOLE_TITLE = { overview: '工作台总览', create: '创作中心', taskcenter: '任务中心', tasks: '我的作品', settings: '环境与配置', experience: '能力体验' };
+/* 站内页（产品）与登录页：站内页进统一壳但不显示工作台标题栏；登录页保持全宽 */
+const isSiteLayout = (v) => v === 'login';
+const isSitePage = (v) => SITE_VIEWS.includes(v);
+const isWorkspace = (v) => ['overview', 'create', 'taskcenter', 'tasks', 'settings', 'experience'].includes(v);
 const userSlot = document.getElementById('user-slot');
 let userSlotKey = null;
 
@@ -82,11 +84,11 @@ function pageHtml() {
   if (s.view === 'experience') {
     const cap = capById(s.exp.capId);
     if (cap && s.me && !V.canUse(s, cap.id)) return `<div class="console">${V.errorBlock({ message: `你的企业未开通「${cap.name}」。`, hint: '如需使用，请联系你的企业管理员或商予科技开通。', action: 'contact' })}</div>`;
-    return cap ? experienceView(s, cap) : `<div class="console">${V.errorBlock({ message: '没有找到这项能力。', hint: '请回到能力目录重新选择。', action: 'config' })}</div>`;
+    return cap ? experienceView(s, cap) : `<div class="console">${V.errorBlock({ message: '没有找到这项能力。', hint: '请回到能力矩阵重新选择。', action: 'config' })}</div>`;
   }
   const page = {
     home: V.homeView, capabilities: V.capabilitiesView, scenarios: V.scenariosView, integration: V.integrationView,
-    overview: V.overviewView, create: V.createView, taskcenter: V.taskCenterView, tasks: V.tasksView, catalog: V.catalogView, settings: V.settingsView,
+    overview: V.overviewView, create: V.createView, taskcenter: V.taskCenterView, tasks: V.tasksView, settings: V.settingsView,
   }[s.view] || V.homeView;
   return page(s);
 }
@@ -100,12 +102,13 @@ function render() {
   const chatAtBottom = !chatBox || chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 40;
 
   const isSite = isSiteLayout(state.view);
+  const isSitePageNow = isSitePage(state.view);
   const accessNote = isWorkspace(state.view) ? V.accessBanner(state) : '';
   const banner = state.configError ? `<div class="page-banner">${V.errorBlock(state.configError, { retry: 'reload-config' })}</div>` : accessNote ? `<div class="page-banner">${accessNote}</div>` : '';
   viewRoot.className = `view-root ${isSite ? 'view-root--site' : 'view-root--console'}`;
   viewRoot.innerHTML = isSite
     ? `<main id="main" tabindex="-1" class="site-main">${banner}${pageHtml()}</main>`
-    : `<div class="console-shell${state.navCollapsed ? ' nav-collapsed' : ''}">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${V.consoleBar(state, CONSOLE_TITLE[state.view] || adminTitle(state.view) || '工作台')}${pageHtml()}</main></div>`;
+    : `<div class="console-shell${state.navCollapsed ? ' nav-collapsed' : ''}">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${isSitePageNow ? '' : V.consoleBar(state, CONSOLE_TITLE[state.view] || adminTitle(state.view) || '工作台')}${pageHtml()}</main></div>`;
 
   overlayRoot.innerHTML = state.dialog?.type === 'cred' ? credentialDialog(state.dialog)
     : state.dialog?.type === 'mode' ? V.modeDialog(state)
@@ -197,6 +200,7 @@ function parseHash() {
   if (h.startsWith('experience/')) return { view: 'experience', capId: h.slice(11) };
   const adm = parseAdminHash(h);
   if (adm) return adm;
+  if (h === 'catalog') return { view: 'capabilities' }; // 能力目录已并进能力矩阵，旧链接/书签直接跳过去
   if (navById(h)) return { view: h };
   return { view: DEFAULT_VIEW };
 }

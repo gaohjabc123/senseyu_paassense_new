@@ -78,6 +78,10 @@ main:focus { outline: none; }
 
 /* ============ 官网：Hero ============ */
 .hero { position: relative; overflow: hidden; background: linear-gradient(140deg, var(--brand-900) 0%, var(--brand-800) 45%, #0E7490 100%); color: #fff; }
+/* 站内页进统一壳后：hero、渐变 CTA 与白底通栏在壳里收成圆角卡片，不贴边 */
+.console-main > .site > .hero { margin: var(--sp-6) var(--sp-8) 0; border-radius: var(--radius-lg); }
+.console-main > .site > .cta { margin: 0 var(--sp-8) var(--sp-16); border-radius: var(--radius-lg); }
+.console-main .section--alt { margin-left: var(--sp-8); margin-right: var(--sp-8); border: 1px solid var(--gray-200); border-radius: var(--radius-lg); }
 .hero__bg { position: absolute; inset: 0; opacity: .5; pointer-events: none;
   background: radial-gradient(700px 380px at 78% 18%, rgba(34,211,238,.35), transparent 65%),
               radial-gradient(600px 400px at 12% 88%, rgba(129,140,248,.30), transparent 60%); }
@@ -401,6 +405,7 @@ main:focus { outline: none; }
   .topbar__cta { padding: 7px 10px; font-size: 13px; }
   .env-switch { padding: 6px 9px; }
   .console, .console-main > .console-bar, .view-root--console .page-banner { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+  .console-main > .site > .hero, .console-main > .site > .cta, .console-main .section--alt { margin-left: var(--sp-4); margin-right: var(--sp-4); }
   .console-bar { padding-top: var(--sp-5); padding-bottom: var(--sp-4); }
   .console-bar h1 { font-size: var(--text-xl); }
   .hero__inner { padding: var(--sp-12) var(--sp-4) var(--sp-10); }
