@@ -82,6 +82,16 @@ test('版本号只在 package.json 定义，源码里没有手写版本号', asy
   }
 });
 
+test('布局回归：开关轨道不被表单 label 规则盖掉，能力表按钮不换行', async () => {
+  const fs = await import('node:fs');
+  const css = fs.readFileSync(new URL('../src/style.css', import.meta.url), 'utf8');
+  // .form-field label 是 (0,1,1)，单写 .switch (0,1,0) 会输：轨道 0 宽、圆点压住「开启」文字
+  assert.match(css, /\.form-field label\.switch\s*\{[^}]*display:\s*inline-flex/, '开关选择器必须盖过 .form-field label 的 display:block');
+  // 能力矩阵 / 能力目录的「体验」按钮曾被挤成「体/验」两行
+  assert.match(css, /\.cap-table td:last-child[^{]*\{[^}]*white-space:\s*nowrap/, '能力表操作列必须不换行');
+  assert.match(css, /\.table td \.btn\s*\{[^}]*white-space:\s*nowrap/, '表内按钮必须不换行');
+});
+
 test('导航按角色与客户类别：院校多出教学与班级管理，企业保持不变', async () => {
   const { navFor, roleLabel, ORG_TYPES } = await import('../src/lib/product.js');
   const ids = (role, isSchool) => navFor(role, { isSchool }).flatMap((s) => s.items.map((i) => i.id));

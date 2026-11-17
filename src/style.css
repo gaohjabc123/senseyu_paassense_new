@@ -172,11 +172,14 @@ main:focus { outline: none; }
 .table-scroll { position: relative; overflow-x: auto; -webkit-overflow-scrolling: touch; } /* relative：让表格内的 sr-only 文本不撑出页面 */
 .cap-table { background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius-md); }
 .cap-table td { font-size: 13px; }
+/* 能力表操作列与短标签不换行：按钮「体验」曾被挤成「体/验」两行，所属「视频合成」也被折成两行 */
+.cap-table td:last-child, .cap-table td:nth-child(2) { white-space: nowrap; }
+.table td .btn { white-space: nowrap; }
 .cap-table b { color: var(--gray-900); }
 .tag { display: inline-block; white-space: nowrap; margin-left: 6px; font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--accent-50); color: var(--accent-600); font-weight: 600; }
 .muted { color: var(--gray-500); }
 .cell-scene { display: block; margin-top: 4px; color: var(--gray-500); font-size: 12px; }
-.code-sm { font-size: 11px; color: var(--brand-700); background: var(--brand-50); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
+.code-sm { font-size: 11px; color: var(--brand-700); background: var(--brand-50); padding: 2px 6px; border-radius: 6px; overflow-wrap: anywhere; }
 .status { display: inline-block; padding: 3px 10px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .st-ready { background: var(--success-50); color: #047857; }
 .hint-block { margin-top: var(--sp-4); color: var(--gray-500); font-size: 12px; line-height: 1.7; }
@@ -546,7 +549,8 @@ main:focus { outline: none; }
 .img-thumb { position: relative; width: 72px; height: 72px; flex: none; }
 .img-thumb img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--gray-200); display: block; }
 .img-thumb__remove { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--gray-900); color: #fff; font-size: 13px; line-height: 1; cursor: pointer; padding: 0; }
-.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+/* 开关：必须盖过 .form-field label 的 display:block（(0,1,1) 高于 .switch 的 (0,1,0)，曾导致轨道 0 宽、圆点压住文字） */
+.switch, .form-field label.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-slider { width: 40px; height: 22px; border-radius: 999px; background: var(--gray-300); position: relative; transition: background .15s; flex: none; }
 .switch-slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .15s; }
