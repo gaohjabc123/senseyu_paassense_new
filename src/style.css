@@ -308,7 +308,9 @@ main:focus { outline: none; }
 /* 能力体验 */
 .exp-crumb { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--gray-500); margin-bottom: var(--sp-4); }
 .exp-crumb b { color: var(--gray-900); }
-.exp-grid { align-items: start; }
+.exp-grid { align-items: start; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+/* 体验表单单列排布：之前两列把每个字段压到半宽，输入框、提示词文本域、上传区都挤在一起（图片编辑截图验收） */
+.exp-form-grid { display: grid; grid-template-columns: 1fr; gap: var(--sp-5); }
 .exp-field-row { display: flex; gap: 8px; align-items: flex-start; }
 .exp-field-row .exp-input { flex: 1; min-width: 0; }
 .exp-field-row .btn { flex: none; margin-top: 1px; }

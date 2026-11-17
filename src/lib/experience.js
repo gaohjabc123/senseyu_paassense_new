@@ -109,7 +109,7 @@ export function experienceView(s, cap) {
     ${requiresCard(ex, s.config)}
     <div class="grid-2 exp-grid">
       <div class="card"><div class="card__title"><h2>${esc(ex.dialogTitle || '填写参数')}</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>
-        <div class="form-grid">${fields}</div>
+        <div class="exp-form-grid">${fields}</div>
         <div class="actions">
           ${ex.dialogTitle
             ? `<button class="btn" type="button" data-action="nav-back" ${busy ? 'disabled' : ''}>取消</button>
