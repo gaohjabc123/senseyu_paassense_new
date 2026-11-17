@@ -127,6 +127,18 @@ export const api = {
     close: (sessionId) => post('live/multi/close', { sessionId }),
   },
 
+  // 过渡视频：按任务查状态 / 批量删除（平台只提供按任务查，没有按素材 ID 查的接口）
+  transition: {
+    status: (taskIds) => post('live/transition/status', { taskIds }),
+    remove: (taskIds) => post('live/transition/delete', { taskIds }),
+  },
+
+  // 预热素材：按 fileIds 批量查询 / 批量删除（没有全量列表接口，想查必须先有 fileId）
+  warming: {
+    status: (fileIds) => post('live/warming/status', { fileIds }),
+    remove: (fileIds) => post('live/warming/delete', { fileIds }),
+  },
+
   // 账单：9 页签 + 日期范围；CSV 用 fetch + blob 下载（GET 也要带运行模式头，锚点直链带不上）
   bill: {
     list: (params = {}) => request(`bill${qs(params)}`),

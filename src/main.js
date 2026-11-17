@@ -18,6 +18,9 @@ import { initialAdminState, parseAdminHash, renderAdminRoute, ADMIN_ROUTES, cred
 const SAMPLE_TEXT = '新款智能手表今天上市，支持全天心率监测、睡眠分析与运动记录，轻巧续航七天，欢迎到店体验。';
 const MAX_UPLOAD_BYTES = 1024 * 1024;
 
+/** 过渡视频 / 预热素材「查状态 + 批量删除」区的初始状态（挂在 state.exp 下，随体验页切换重置） */
+const freshManage = () => ({ statusIds: '', rows: [], loading: false, error: null, deleteIds: '', deleting: false, deleteError: null, deleteMsg: '' });
+
 const state = {
   view: DEFAULT_VIEW,
   mode: getMode(),
@@ -33,7 +36,7 @@ const state = {
   voice: { text: '大家好，欢迎使用如影 AI 能力开放平台。', qid: '', qidInput: '', speed: 1.25, volume: 200.5, pitch: 0, busy: false, error: null, inputError: '', result: null },
   kb: { loaded: false, loading: false, loadError: null, docs: [], uploads: [], dragging: false, deleting: null },
   chat: { messages: [], input: '', streaming: false, abort: null, lastQuestion: '' },
-  exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null },
+  exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null, transition: freshManage(), warming: freshManage() },
   expPrefill: null, // 「下一步」带入的参数：跳到目标能力时一次性填入（applyRoute 里消费）
   recent: loadRecent(), // 上次的结果（本机）：上次合成的音频 / 上次训好的形象 / 上次复刻的 QID
   backStack: [], // 返回栈：走过的页面（本机内存，刷新清空），「返回」按钮按它回上一个页面
@@ -110,10 +113,10 @@ function pageHtml() {
   if (s.view === 'experience') {
     const cap = capById(s.exp.capId);
     if (cap && s.me && !V.canUse(s, cap.id)) return `<div class="console">${V.errorBlock({ message: `你的企业未开通「${cap.name}」。`, hint: '如需使用，请联系你的企业管理员或商予科技开通。', action: 'contact' })}</div>`;
-    return cap ? experienceView(s, cap) : `<div class="console">${V.errorBlock({ message: '没有找到这项能力。', hint: '请回到能力矩阵重新选择。', action: 'config' })}</div>`;
+    return cap ? experienceView(s, cap) : `<div class="console">${V.errorBlock({ message: '没有找到这项能力。', hint: '请回到创作中心重新选择。', action: 'config' })}</div>`;
   }
   const page = {
-    home: V.homeView, capabilities: V.capabilitiesView, scenarios: V.scenariosView, integration: V.integrationView,
+    home: V.homeView, scenarios: V.scenariosView, integration: V.integrationView,
     overview: V.overviewView, create: V.createView, taskcenter: V.taskCenterView, livetest: V.liveTestView, multitest: V.multiTestView, livescripts: V.liveScriptsView, bill: V.billView, tasks: V.tasksView, settings: V.settingsView,
   }[s.view] || V.homeView;
   return page(s);
@@ -230,7 +233,7 @@ function parseHash() {
   }
   const adm = parseAdminHash(h);
   if (adm) return adm;
-  if (h === 'catalog') return { view: 'capabilities' }; // 能力目录已并进能力矩阵，旧链接/书签直接跳过去
+  if (h === 'catalog' || h === 'capabilities') return { view: 'create' }; // 能力目录与能力矩阵已并进创作中心，旧链接/书签直接跳过去
   if (navById(h)) return { view: h };
   return { view: DEFAULT_VIEW };
 }
@@ -244,6 +247,10 @@ function go(view, { push = true } = {}) {
 function applyRoute() {
   const prevKey = routeKey(state.route);
   const r = parseHash();
+  // 旧链接/书签 #capabilities 与 #catalog：渲染创作中心的同时把地址栏也改写成 #create，
+  // 否则地址栏还留着旧 hash（replaceState 不触发 hashchange，不会循环）。
+  const rawHash = decodeURIComponent(location.hash.replace(/^#/, ''));
+  if (rawHash === 'catalog' || rawHash === 'capabilities') history.replaceState(null, '', '#create');
   const nextKey = routeKey(r);
   // 浏览器前进/后退或手输 hash：后退时把已回到的那页弹出栈，前进时把上一页压栈
   if (navFromGo) navFromGo = false;
@@ -258,7 +265,7 @@ function applyRoute() {
   if (ADMIN_ROUTES[r.view]) admin.enter(r);
   if (r.view === 'experience' && r.capId !== state.exp.capId) {
     state.exp.abort?.abort();
-    state.exp = { capId: r.capId, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null };
+    state.exp = { capId: r.capId, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null, transition: freshManage(), warming: freshManage() };
     if (state.expPrefill?.capId === r.capId) { state.exp.params = { ...state.expPrefill.params }; state.expPrefill = null; }
   }
   if (r.view === 'tasks' || r.view === 'overview') reloadWorks().then((changed) => { if (changed && state.view === r.view && !state.dialog) render(); });
@@ -1111,6 +1118,42 @@ function highlightTour() {
 const admin = createAdminController({ state, render, toast, go, refreshMe });
 
 /* ================= 事件：统一委托，只绑定一次 ================= */
+/* ================= 过渡视频 / 预热素材：查状态 + 批量删除 ================= */
+// 查状态：输入框里的编号可能来自 data-bind（已同步进 state），也可能只在 DOM 里（刚粘贴未触发 input），
+// 读 DOM 为准；服务端按换行/逗号拆、去重、上限 10 个。
+function manageStatus(kind) {
+  const t = state.exp[kind];
+  if (!t || t.loading) return;
+  const el = document.getElementById('manage-status-ids');
+  const input = el ? el.value : t.statusIds;
+  t.loading = true; t.error = null; render();
+  const call = kind === 'warming' ? api.warming.status(input) : api.transition.status(input);
+  call.then((d) => {
+    t.rows = kind === 'warming' ? (d.files || []) : (d.tasks || []);
+    toast(t.rows.length ? `查到 ${t.rows.length} 条状态` : '平台没有返回这批编号的状态');
+  }).catch((e) => { t.error = toApiError(e); }).finally(() => { t.loading = false; render(); });
+}
+function manageDelete(kind) {
+  const t = state.exp[kind];
+  if (!t || t.deleting) return;
+  const el = document.getElementById('manage-delete-ids');
+  const input = el ? el.value : t.deleteIds;
+  const ids = String(input || '').split(/[\r\n,，]+/).map((s) => s.trim()).filter(Boolean);
+  if (!ids.length) { toast('请先填要删除的编号。'); return; }
+  const label = kind === 'warming' ? '文件 ID' : '任务编号';
+  if (!window.confirm(`确认删除这 ${ids.length} 个${label}？平台上的预热文件/过渡视频会被删掉，删除后不可恢复。`)) return;
+  t.deleting = true; t.deleteError = null; t.deleteMsg = ''; render();
+  const call = kind === 'warming' ? api.warming.remove(input) : api.transition.remove(input);
+  call.then((d) => {
+    const n = (d.deleted || ids).length;
+    t.deleteMsg = `已删除 ${n} 个。`;
+    t.deleteIds = '';
+    toast(`已删除 ${n} 个`);
+    // 删完刷新状态表（状态区留着上次的编号，直接重查）
+    if (String(t.statusIds || '').trim()) manageStatus(kind);
+  }).catch((e) => { t.deleteError = toApiError(e); }).finally(() => { t.deleting = false; render(); });
+}
+
 const actions = {
   ...admin.actions,
   'open-mode': () => { state.dialog = { type: 'mode' }; render(); },
@@ -1401,6 +1444,11 @@ const actions = {
     t.busy = ''; render();
   },
   'multitest-retry': () => { state.multitest.error = null; render(); },
+  // ---- 过渡视频 / 预热素材：查状态 + 批量删除 ----
+  'transition-status': () => manageStatus('transition'),
+  'transition-delete': () => manageDelete('transition'),
+  'warming-status': () => manageStatus('warming'),
+  'warming-delete': () => manageDelete('warming'),
   // ---- 账单 ----
   'bill-query': () => loadBill(),
   'bill-csv': async () => {
@@ -1524,7 +1572,7 @@ document.addEventListener('click', (ev) => {
     loadBill(); return;
   }
   if (d.livescriptsTab) { state.livescripts.tab = d.livescriptsTab; render(); return; }
-  if (d.group) { state.capFilter = d.group; return go('capabilities'); }
+  if (d.group) { state.capFilter = d.group; return go('create'); }
   if (d.filter) { state.capFilter = d.filter; return render(); }
   if (d.use) { return go(`experience/${d.use}`); }
   if (d.experience) { state.createTab = d.experience; enterExpTab(d.experience); return go('create'); }

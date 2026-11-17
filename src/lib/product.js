@@ -37,8 +37,7 @@ export const NAV_SECTIONS = [
   {
     id: 'console', label: '工作台', items: [
       { id: 'overview', label: '总览', icon: '▦' },
-      // 能力矩阵是干活的入口（找能力 → 点体验），放在工作台里：总览 → 矩阵 → 创作 → 任务 → 作品
-      { id: 'capabilities', label: '能力矩阵', icon: '◈' },
+      // 创作中心是干活的入口（找能力 → 点体验），能力矩阵已并进创作中心下方，不再单列导航
       { id: 'create', label: '创作中心', icon: '✦' },
       { id: 'taskcenter', label: '任务中心', icon: '☰' },
       { id: 'livetest', label: '直播内测', icon: '▶' },
@@ -90,9 +89,9 @@ export const ALL_NAV = [...NAV_SECTIONS, TEACH_NAV, SCHOOL_ORG_NAV, ADMIN_NAV, A
 export const navById = (id) => ALL_NAV.find((n) => n.id === id);
 /**
  * 站内自带标题的页面（不显示工作台标题栏，用自己的 page-head）。
- * 注意：这是渲染方式，与导航分组无关——能力矩阵导航上在工作台里，渲染仍是站内页。
+ * 注意：这是渲染方式，与导航分组无关——创作中心导航上在工作台里，渲染仍走工作台标题栏。
  */
-export const SITE_VIEWS = ['home', 'capabilities', 'scenarios', 'integration'];
+export const SITE_VIEWS = ['home', 'scenarios', 'integration'];
 export const DEFAULT_VIEW = 'home';
 export const ROLE_LABEL = { super_admin: '超级管理员', tenant_admin: '企业管理员', teacher: '教师', member: '成员' };
 export const SCHOOL_ROLE_LABEL = { super_admin: '超级管理员', tenant_admin: '学校管理员', teacher: '教师', member: '学生' };

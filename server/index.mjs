@@ -18,7 +18,7 @@ import { createRuyingClient, normalizeDuration, TASK_STATUS_TEXT } from './lib/r
 import { DEMO_AVATARS } from './lib/demo-avatars.mjs';
 import { KbStore } from './lib/kb.mjs';
 import { answerQuestion, completeDeepSeek } from './lib/answer.mjs';
-import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveScriptParam, buildLiveChannelParam, buildSuperProChannelParam, buildSuperProControlParam, buildDecorationTaskBody, buildContentRepoBody, buildWarmingBody, buildTranscodeBody, buildTransitionBody, buildLiveCommandParam, buildMultiChannelCreateBody, buildMultiCommandQueueBody, buildBillListBody, buildBillVoiceListBody, billTabOf, BILL_TABS, normalizeBillRow, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
+import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveScriptParam, buildLiveChannelParam, buildSuperProChannelParam, buildSuperProControlParam, buildDecorationTaskBody, buildContentRepoBody, buildWarmingBody, buildTranscodeBody, buildTransitionBody, parseTransitionTaskIds, parseWarmingFileIds, buildLiveCommandParam, buildMultiChannelCreateBody, buildMultiCommandQueueBody, buildBillListBody, buildBillVoiceListBody, billTabOf, BILL_TABS, normalizeBillRow, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
 import { maskValue, redactText } from './lib/mask.mjs';
 import { AppError, E, toAppError, errorBody } from './lib/errors.mjs';
 import { openDb } from './lib/db.mjs';
@@ -974,6 +974,52 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
     status: String(r.status ?? r.playStatus ?? r.state ?? ''),
     raw: r,
   }));
+  // 过渡视频任务状态样例（演示环境）：任务编号 / 素材 ID / 状态
+  const mockTransitionTasks = (ids) => ids.map((id, i) => ({
+    taskId: String(id),
+    materialId: i === 0 ? 'transition_a_v1' : `transition_b_v${i + 1}`,
+    status: i === 0 ? 5 : 2,
+    statusText: i === 0 ? '已完成' : '生成中',
+    raw: {},
+  }));
+  // 过渡视频按任务查状态：平台返回形状以 pickList 兜底（list/records/result 数组）；
+  // 状态是数字时按任务状态码翻译，字符串时原样显示；素材 ID 与任务 ID 都可能缺失，缺失留空。
+  const normalizeTransitionTasks = (data) => pickList(data).map((r) => {
+    const st = r.status ?? r.taskStatus ?? r.state ?? '';
+    const num = Number(st);
+    return {
+      taskId: String(r.taskId ?? r.task_id ?? r.id ?? ''),
+      materialId: String(r.materialId ?? r.material_id ?? ''),
+      status: st,
+      statusText: Number.isFinite(num) && String(st).trim() !== '' ? (TASK_STATUS_TEXT[num] || `状态 ${num}`) : String(st || '未知'),
+      raw: r,
+    };
+  });
+  // 预热素材状态码（文档 V1.5.2「预热素材查询」原文）：0 未开始、1 等待中、2 进行中、5 已完成、9 异常
+  const WARMING_STATUS_TEXT = { 0: '未开始', 1: '等待中', 2: '进行中', 5: '已完成', 9: '异常' };
+  // 预热素材查询样例（演示环境）：文件 ID / 任务 ID / 状态 / 地址
+  const mockWarmingFiles = (ids) => ids.map((id, i) => ({
+    fileId: String(id),
+    taskId: String(2040 + i * 2),
+    status: i === 0 ? 5 : 2,
+    statusText: i === 0 ? '已完成' : '进行中',
+    fileUrl: `https://cdn.invalid/scene_${i + 1}.zip`,
+    raw: {},
+  }));
+  // 预热素材按 fileIds 批量查询：返回 data 为数组，每项含 owner/taskId/fileId/fileUrl/status；
+  // taskId 文档表里写 String、响应样例是数字 2040/2042，两种类型都按原文如实处理（统一转字符串）。
+  const normalizeWarmingFiles = (data) => pickList(data).map((r) => {
+    const st = r.status ?? r.state ?? '';
+    const num = Number(st);
+    return {
+      fileId: String(r.fileId ?? r.file_id ?? ''),
+      taskId: String(r.taskId ?? r.task_id ?? r.id ?? ''),
+      status: st,
+      statusText: Number.isFinite(num) && String(st).trim() !== '' ? (WARMING_STATUS_TEXT[num] || `状态 ${num}`) : String(st || '未知'),
+      fileUrl: String(r.fileUrl ?? r.file_url ?? r.url ?? ''),
+      raw: r,
+    };
+  });
 
   /** 账单查询（/api/bill 与 /api/bill.csv 共用）：页签→algoType 映射见 realcap.BILL_TABS；
    * algoGroup 用服务端可配置常量 cfg.billAlgoGroup（默认 1，环境变量 RUYING_BILL_ALGO_GROUP），
@@ -1200,6 +1246,46 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiChannelClose(String(sessionId).trim());
       const info = closeLiveSession(String(sessionId).trim(), '手动关闭');
       return ok(res, { ok: true, mode: 'real', endedAt: info?.endedAt || Date.now(), durationSec: info?.durationSec ?? null });
+    }
+
+    // ---- 过渡视频：按任务查状态 / 批量删除（控制台 multiVideoInteractiveTest 的过渡素材管理） ----
+    // 口径以飞书文档 V1.5.2 为准：查状态 POST .../transition-transcode-tasks/list（体 {taskIds}），
+    // 批量删除 POST .../transition-transcode-tasks/delete（体 {taskIds}）；没有按素材 ID 查状态的接口。
+    if (p === '/api/live/transition/status' && m === 'POST') {
+      guard(ctx, 'live-transition', 'live.transition.status');
+      const body = await readBody(req);
+      const taskIds = parseTransitionTaskIds(body.taskIds ?? body.ids ?? '');
+      if (mode !== 'real') return ok(res, { mode: 'mock', tasks: mockTransitionTasks(taskIds), note: '演示环境：状态为样例。' });
+      const data = await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.transitionTaskList(taskIds);
+      return ok(res, { mode: 'real', tasks: normalizeTransitionTasks(data), raw: data });
+    }
+    if (p === '/api/live/transition/delete' && m === 'POST') {
+      guard(ctx, 'live-transition', 'live.transition.delete');
+      const body = await readBody(req);
+      const taskIds = parseTransitionTaskIds(body.taskIds ?? body.ids ?? '');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', deleted: taskIds, note: '演示环境：未真正删除。' });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.transitionDelete(taskIds);
+      return ok(res, { ok: true, mode: 'real', deleted: taskIds });
+    }
+
+    // ---- 预热素材：按 fileIds 批量查询 / 批量删除 ----
+    // 口径以飞书文档 V1.5.2 为准：查询 GET .../file/warming/query?fileIds=a,b（fileIds 必填），
+    // 删除 POST .../file/warming/del（体 {fileIds}）；都是批量，没有单查 / 单删接口，也没有全量列表接口。
+    if (p === '/api/live/warming/status' && m === 'POST') {
+      guard(ctx, 'live-warming', 'live.warming.status');
+      const body = await readBody(req);
+      const fileIds = parseWarmingFileIds(body.fileIds ?? body.ids ?? '');
+      if (mode !== 'real') return ok(res, { mode: 'mock', files: mockWarmingFiles(fileIds), note: '演示环境：状态为样例。' });
+      const data = await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.warmFileQuery(fileIds);
+      return ok(res, { mode: 'real', files: normalizeWarmingFiles(data), raw: data });
+    }
+    if (p === '/api/live/warming/delete' && m === 'POST') {
+      guard(ctx, 'live-warming', 'live.warming.delete');
+      const body = await readBody(req);
+      const fileIds = parseWarmingFileIds(body.fileIds ?? body.ids ?? '');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', deleted: fileIds, note: '演示环境：未真正删除。' });
+      const data = await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.warmFileDelete(fileIds);
+      return ok(res, { ok: true, mode: 'real', deleted: fileIds, taskId: typeof data === 'object' ? (data?.taskId ?? data?.id ?? null) : data ?? null });
     }
 
     // ---- 账单：9 页签 + 日期范围；本地导出 CSV（真下载）；发送邮箱走 mailto（前端），本站不代发 ----

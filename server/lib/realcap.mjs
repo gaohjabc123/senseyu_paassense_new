@@ -786,6 +786,35 @@ export function buildTranscodeBody(p = {}) {
  * param 为 JSON 数组字符串，每项 {url, materialId}；materialId 只能用英文字母、数字、
  * 下划线、加号、减号，同一账号下重复会让整个请求失败。
  */
+/**
+ * 过渡视频任务编号解析（查状态与批量删除共用）：换行 / 逗号 / 中文逗号分隔，去重，最多 10 个。
+ * 平台只提供按任务查状态（POST .../transition-transcode-tasks/list，体 {taskIds}）与
+ * 按任务批量删除（POST .../transition-transcode-tasks/delete，体 {taskIds}），
+ * 没有按素材 ID（materialId）查状态的接口——界面上如实写明，不编一个。
+ */
+export function parseTransitionTaskIds(input) {
+  const ids = (Array.isArray(input) ? input : String(input || '').split(/[\r\n,，]+/))
+    .map((s) => String(s).trim()).filter(Boolean);
+  const uniq = [...new Set(ids)];
+  if (!uniq.length) throw fail('INVALID_INPUT', '请至少填一个过渡视频任务编号。');
+  if (uniq.length > 10) throw fail('INVALID_INPUT', '一次最多查 / 删 10 个任务编号。');
+  return uniq;
+}
+
+/**
+ * 预热素材 fileId 解析（查状态与批量删除共用）：换行 / 逗号 / 中文逗号分隔，去重，最多 10 个。
+ * 文档 V1.5.2「预热素材查询/删除」：查询 GET .../file/warming/query?fileIds=a,b（fileIds 必填），
+ * 删除 POST .../file/warming/del（体 {fileIds}）；都是批量，没有单查 / 单删接口，也没有全量列表接口。
+ */
+export function parseWarmingFileIds(input) {
+  const ids = (Array.isArray(input) ? input : String(input || '').split(/[\r\n,，]+/))
+    .map((s) => String(s).trim()).filter(Boolean);
+  const uniq = [...new Set(ids)];
+  if (!uniq.length) throw fail('INVALID_INPUT', '请至少填一个预热素材文件 ID。');
+  if (uniq.length > 10) throw fail('INVALID_INPUT', '一次最多查 / 删 10 个文件 ID。');
+  return uniq;
+}
+
 export function buildTransitionBody(p = {}) {
   const url = nonEmpty(p.url, '过渡视频地址');
   if (!isHttpUrl(url)) throw fail('INVALID_INPUT', '过渡视频地址需为 http(s) 地址。');

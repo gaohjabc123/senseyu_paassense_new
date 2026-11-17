@@ -645,7 +645,7 @@ export const CAPABILITIES = [
         { key: 'zid', label: 'zip 素材文件 ID', type: 'text', default: '', placeholder: 'zip 文件的 zid' },
         { key: 'md5', label: 'zip 素材文件 MD5', type: 'text', default: '', placeholder: 'zip 文件的 md5' },
       ],
-      notes: '真实模式：预热完成后视频合成会更快；任务编号进任务中心；平台还提供按 fileId 查询与删除接口（查询看单文件状态，删除可删预热文件），本期只做创建。',
+      notes: '真实模式：预热完成后视频合成会更快；任务编号进任务中心；下方可按 fileId 查状态与批量删除（查询按 fileIds 列表批量查，删除按 fileIds 列表批量删；平台没有“列出全部预热素材”的接口，想查必须先有 fileId）。',
       mockTitle: '预热素材',
       mockJson: { status: '已提交' },
     },
@@ -707,7 +707,7 @@ export const CAPABILITIES = [
         { key: 'url', label: '过渡视频地址', type: 'text', default: '', placeholder: 'https://…/transition.mp4', hint: '远端视频地址，平台异步下载并预处理' },
         { key: 'materialId', label: '素材 ID', type: 'text', default: '', placeholder: 'transition_a_v1', hint: '英文字母、数字、下划线、加号、减号；同一账号下重复会让整个请求失败' },
       ],
-      notes: '真实模式：异步下载并预处理为直播可用的过渡视频；任务编号进任务中心；平台还提供按任务查状态、按素材查状态与批量删除接口。',
+      notes: '真实模式：异步下载并预处理为直播可用的过渡视频；任务编号进任务中心；下方可按任务查状态与批量删除（平台只提供按任务查状态，没有按素材 ID 查状态的接口）。',
       mockTitle: '过渡视频预处理',
       mockJson: { status: '已提交' },
     },
@@ -750,7 +750,7 @@ export const SCENARIOS = [
 export const INTEGRATION_STEPS = [
   { n: '01', title: '注册与获取凭据', desc: '在如影 PaaS 控制台创建应用，取得 APP_ID / APP_KEY，凭据只保存在服务端。' },
   { n: '02', title: '换取 Token', desc: '服务端用 MD5(appId + timestamp + appKey) 签名换取 Token，自动缓存与提前刷新。' },
-  { n: '03', title: '调用能力接口', desc: '按能力矩阵选择接口，提交异步任务并轮询状态；计费路径有白名单保护。' },
+  { n: '03', title: '调用能力接口', desc: '按创作中心选择接口，提交异步任务并轮询状态；计费路径有白名单保护。' },
   { n: '04', title: '取回成果并发布', desc: '下载成片/音频，按规定添加「AI生成」显式标识后对外发布。' },
 ];
 

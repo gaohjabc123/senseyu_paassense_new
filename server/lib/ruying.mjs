@@ -45,6 +45,9 @@ export const PLATFORM = {
   // 以下为 2.12.0 新增（6 个缺的能力）：请求体由 server/lib/realcap.mjs 按飞书文档构造
   contentRepoCreate: { path: '/api/2dvh/v1/material/voice/content/repository/create' },
   fileWarmingCreate: { path: '/api/2dvh/v1/material/file/warming' },
+  // 以下为 2.17.0 新增（预热素材查询/删除）：文档 V1.5.2「预热素材查询/删除」
+  fileWarmingQuery: { path: '/api/2dvh/v1/material/file/warming/query' },
+  fileWarmingDelete: { path: '/api/2dvh/v1/material/file/warming/del' },
   fileTranscode: { path: '/api/2dvh/v1/material/file/transcode' },
   transitionCreate: { path: '/api/2dvh/v1/multi-video-live/transition-transcode-tasks' },
   multiChannelCreate: { path: '/api/2dvh/v1/multi-video-live/channel/create' },
@@ -61,6 +64,8 @@ export const PLATFORM = {
   multiChannelBase: { path: '/api/2dvh/v1/live/video-interactive/channel' },
   decorationTaskList: { path: '/api/2dvh/v1/multi-video-live/decoration-tasks/list' },
   transitionTaskList: { path: '/api/2dvh/v1/multi-video-live/transition-transcode-tasks/list' },
+  // 以下为 2.17.0 新增（过渡视频批量删除）：文档 V1.5.2「过渡视频素材删除」
+  transitionDelete: { path: '/api/2dvh/v1/multi-video-live/transition-transcode-tasks/delete' },
   billList: { path: '/api/assist/bill/list' },
   billVoiceList: { path: '/api/assist/bill/voice/list' },
   qidDetail: { path: '/api/voice/v3/tts/qid' },
@@ -463,6 +468,11 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
       return post(PLATFORM.transitionTaskList.path, { taskIds }, { billable: false });
     },
 
+    /** 过渡视频：按任务批量删除（体 {taskIds}，只读查询不扣额度，删除本身不计费） */
+    async transitionDelete(taskIds) {
+      return post(PLATFORM.transitionDelete.path, { taskIds }, { billable: false });
+    },
+
     /** 账单：非语音任务明细 / 语音按日按月统计（只读查询，不扣额度） */
     async billList(body) {
       return post(PLATFORM.billList.path, body, { billable: false });
@@ -502,6 +512,16 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
     async warmFile(body) {
       const data = await post(PLATFORM.fileWarmingCreate.path, body, { billable: true });
       return taskIdOf(data, '预热素材');
+    },
+
+    /** 预热素材：按 fileIds 批量查询状态（GET，fileIds 为逗号分隔的 URL 查询参数） */
+    async warmFileQuery(fileIds) {
+      return get(`${PLATFORM.fileWarmingQuery.path}?fileIds=${encodeURIComponent(fileIds.join(','))}`);
+    },
+
+    /** 预热素材：按 fileIds 批量删除（POST，体 {fileIds}，返回任务 id） */
+    async warmFileDelete(fileIds) {
+      return post(PLATFORM.fileWarmingDelete.path, { fileIds }, { billable: false });
     },
 
     /** 视频转码：提交转码任务，返回任务编号 */

@@ -53,6 +53,48 @@ function requiresCard(ex, cfg) {
 }
 
 /**
+ * 过渡视频 / 预热素材的「查状态 + 批量删除」区（与创建表单分开，放在表单下方）。
+ * 查状态只读不扣额度；删除二次确认（main.js 里 confirm），删完刷新上方的状态表。
+ * 口径以飞书文档 V1.5.2 为准：
+ * · 过渡视频：按任务查状态 POST .../transition-transcode-tasks/list（体 {taskIds}），
+ *   批量删除 POST .../transition-transcode-tasks/delete（体 {taskIds}）；没有按素材 ID 查状态的接口。
+ * · 预热素材：按 fileIds 批量查询 GET .../file/warming/query?fileIds=a,b，
+ *   批量删除 POST .../file/warming/del（体 {fileIds}）；没有“列出全部预热素材”的接口，想查必须先有 fileId。
+ */
+function manageSection(s, cap) {
+  const kind = cap.id === 'live-transition' ? 'transition' : cap.id === 'live-warming' ? 'warming' : null;
+  if (!kind || !s.exp?.[kind]) return '';
+  const t = s.exp[kind];
+  const isWarming = kind === 'warming';
+  const idLabel = isWarming ? '文件 ID' : '任务编号';
+  const statusCols = isWarming
+    ? '<th scope="col">文件 ID</th><th scope="col">任务 ID</th><th scope="col">状态</th><th scope="col">地址</th>'
+    : '<th scope="col">任务 ID</th><th scope="col">素材 ID</th><th scope="col">状态</th>';
+  const statusRows = (t.rows || []).map((r) => isWarming
+    ? `<tr><td data-label="文件 ID">${esc(r.fileId || '')}</td><td data-label="任务 ID">${esc(r.taskId || '')}</td><td data-label="状态">${esc(r.statusText || '')}</td><td data-label="地址"><small class="muted">${esc(r.fileUrl || '')}</small></td></tr>`
+    : `<tr><td data-label="任务 ID">${esc(r.taskId || '')}</td><td data-label="素材 ID">${esc(r.materialId || '')}</td><td data-label="状态">${esc(r.statusText || '')}</td></tr>`).join('');
+  const note = isWarming
+    ? '平台没有“列出全部预热素材”的接口，想查状态必须先有 fileId；查询与删除都是按 fileIds 列表批量走，没有单查 / 单删接口。'
+    : '平台只提供按任务查状态，没有按素材 ID 查状态的接口；删除按任务编号批量删。';
+  return `<div class="card"><div class="card__title"><h2>查状态</h2><span class="pill pill--info">只读，不扣额度</span></div>
+      <p class="muted">输入${idLabel}（每行一个或逗号分隔，最多 10 个），查平台返回的状态。</p>
+      <div class="form-field"><label for="manage-status-ids">${idLabel}</label>
+        <textarea class="editor exp-input" id="manage-status-ids" data-bind="exp.${kind}.statusIds" rows="2" placeholder="${isWarming ? 'file_123\nfile_456' : '123456\n123457'}" ${t.loading ? 'disabled' : ''}>${esc(t.statusIds || '')}</textarea></div>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="${kind}-status" ${t.loading ? 'disabled aria-busy="true"' : ''}>${t.loading ? '查询中…' : '查状态'}</button></div>
+      ${t.error ? errorBlock(t.error, { retry: `${kind}-status` }) : ''}
+      ${statusRows ? `<div class="table-scroll"><table class="table"><thead><tr>${statusCols}</tr></thead><tbody>${statusRows}</tbody></table></div>` : ''}
+    </div>
+    <div class="card"><div class="card__title"><h2>批量删除</h2><span class="pill pill--lock">删除后不可恢复</span></div>
+      <p class="muted">输入${idLabel}（与上方同一格式，最多 10 个），删除后会刷新上方的状态表。${note}</p>
+      <div class="form-field"><label for="manage-delete-ids">${idLabel}</label>
+        <textarea class="editor exp-input" id="manage-delete-ids" data-bind="exp.${kind}.deleteIds" rows="2" placeholder="${isWarming ? 'file_123\nfile_456' : '123456\n123457'}" ${t.deleting ? 'disabled' : ''}>${esc(t.deleteIds || '')}</textarea></div>
+      <div class="actions"><button class="btn" type="button" data-action="${kind}-delete" ${t.deleting ? 'disabled aria-busy="true"' : ''}>${t.deleting ? '删除中…' : '删除'}</button></div>
+      ${t.deleteError ? errorBlock(t.deleteError, { retry: `${kind}-delete` }) : ''}
+      ${t.deleteMsg ? `<p class="ok">${esc(t.deleteMsg)}</p>` : ''}
+    </div>`;
+}
+
+/**
  * 通用能力体验器。opts.embedded=true 时只返回主体内容（不带外壳与面包屑），
  * 供创作中心快捷入口嵌在标签页里复用：表单、提交、轮询、结果与体验页是同一套。
  */
@@ -161,12 +203,13 @@ export function experienceView(s, cap, opts = {}) {
         </tbody></table>
       </div>
     </div>
+    ${manageSection(s, cap)}
     ${busy ? `<div class="card">${progressLine(e)}</div>` : ''}
     ${e.error ? `<div class="card">${errorBlock(e.error, { retry: 'exp-run', resume: 'exp-resume' })}</div>` : ''}
     ${e.result ? experienceResult(e.result, cap) : ''}`;
   if (opts.embedded) return body;
   return `<div class="console exp-shell">
-    <nav class="exp-crumb" aria-label="位置"><a href="#capabilities" data-view="capabilities">能力矩阵</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
+    <nav class="exp-crumb" aria-label="位置"><a href="#create" data-view="create">创作中心</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
     ${body}
   </div>`;
 }

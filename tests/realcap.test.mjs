@@ -8,7 +8,7 @@ import {
   buildSuperProChannelParam, buildSuperProControlParam, buildDecorationTaskBody,
   buildLiveCommandParam, buildMultiChannelCreateBody, buildMultiCommandQueueBody,
   buildBillListBody, buildBillVoiceListBody, billRange, billTabOf, normalizeBillRow,
-  BILL_ALGO_GROUP_DEFAULT,
+  BILL_ALGO_GROUP_DEFAULT, parseTransitionTaskIds, parseWarmingFileIds,
   extractTaskResult, assertVendorQuota,
 } from '../server/lib/realcap.mjs';
 
@@ -423,4 +423,19 @@ test('账单行规整：只取平台原字段，2026-11-17 实测的 TTS 真值�
   assert.equal(r.billingUnit, 3, 'billingUnit 原值保留，不猜单位含义');
   assert.equal(r.algoSubType1, 'PAAS_HTTP');
   assert.equal(r.algoSubType2, 'TTS3');
+});
+
+test('过渡视频任务编号解析：换行/逗号/中文逗号分隔，去重，上限 10 个', () => {
+  assert.deepEqual(parseTransitionTaskIds('123\n456, 789，123'), ['123', '456', '789']);
+  assert.deepEqual(parseTransitionTaskIds(['a', 'b', 'a']), ['a', 'b']);
+  assert.throws(() => parseTransitionTaskIds(''), /至少填一个/);
+  assert.throws(() => parseTransitionTaskIds('   \n , '), /至少填一个/);
+  assert.throws(() => parseTransitionTaskIds(Array.from({ length: 11 }, (_, i) => `t${i}`).join(',')), /最多查 \/ 删 10 个/);
+});
+
+test('预热素材 fileId 解析：换行/逗号/中文逗号分隔，去重，上限 10 个', () => {
+  assert.deepEqual(parseWarmingFileIds('file_1\nfile_2, file_3，file_1'), ['file_1', 'file_2', 'file_3']);
+  assert.deepEqual(parseWarmingFileIds(['f1', 'f2']), ['f1', 'f2']);
+  assert.throws(() => parseWarmingFileIds(''), /至少填一个/);
+  assert.throws(() => parseWarmingFileIds(Array.from({ length: 11 }, (_, i) => `f${i}`).join('\n')), /最多查 \/ 删 10 个/);
 });

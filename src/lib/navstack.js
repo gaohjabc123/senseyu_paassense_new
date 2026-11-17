@@ -1,6 +1,6 @@
 // navstack.js —— 页面返回栈（纯函数）：记录用户在站内走过的页面，
 // 让「返回」按钮回到上一个页面，而不是固定的父页面。
-// 栈里存 hash 目标串（'capabilities'、'experience/voice-tts'、'admin/tenants/12'…）。
+// 栈里存 hash 目标串（'create'、'experience/voice-tts'、'admin/tenants/12'…）。
 // 站内跳转（go）与浏览器前进/后退（hashchange）共用同一套栈，保持一致。
 import { navById, DEFAULT_VIEW } from './product.js';
 import { capById } from './capabilities.js';
@@ -28,10 +28,10 @@ export function popNav(stack) {
   return [stack[stack.length - 1], stack.slice(0, -1)];
 }
 
-/** 没有历史可回时的兜底：体验页回能力矩阵，深层后台回父列表，其余回首页 */
+/** 没有历史可回时的兜底：体验页回创作中心，深层后台回父列表，其余回首页 */
 export function fallbackFor(key) {
   if (!key) return DEFAULT_VIEW;
-  if (key.startsWith('experience/')) return 'capabilities';
+  if (key.startsWith('experience/')) return 'create';
   const i = key.lastIndexOf('/');
   if (i > 0) {
     const parent = key.slice(0, i);
@@ -52,7 +52,7 @@ export function backLabelFor(key) {
   if (!key) return '返回上页';
   if (key.startsWith('experience/')) {
     const cap = capById(key.slice(11));
-    return cap ? `返回${cap.name}` : '返回能力矩阵';
+    return cap ? `返回${cap.name}` : '返回创作中心';
   }
   const nav = navById(key);
   if (nav) return `返回${nav.label}`;
