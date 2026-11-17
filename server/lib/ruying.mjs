@@ -101,6 +101,25 @@ export function normalizeVoice(r = {}) {
   };
 }
 
+/**
+ * 公共形象（系统人物）规整：POST /api/2dvh/v1/material/appearance/list 的 result 条目。
+ * extendParam 是 JSON 字符串，含 faceFeatureId / gender / avatarType（1 普通、3 交互、4 动作编辑）。
+ * thumbnailUrl 是缩略图，pkgUrl 是模型 zip 包地址（视频合成 digital_role.url 用）。
+ */
+export function normalizeAppearance(r = {}) {
+  let ext = {};
+  try { ext = typeof r.extendParam === 'string' ? JSON.parse(r.extendParam) : (r.extendParam || {}); } catch { ext = {}; }
+  return {
+    id: r.id ?? null,
+    name: r.materialName || '',
+    thumbnailUrl: r.thumbnailUrl || '',
+    pkgUrl: r.pkgUrl || '',
+    faceFeatureId: ext.faceFeatureId || r.faceFeatureId || '',
+    gender: Number(ext.gender ?? r.gender ?? 0) || 0,
+    avatarType: Number(ext.avatarType ?? r.avatarType ?? 1) || 1,
+  };
+}
+
 export const TASK_STATUS_TEXT = { 1: '未开始（平台排队中）', 2: '生成中', 5: '已完成', 9: '失败' };
 
 /** 把平台任务记录规整成前端使用的统一结构 */
@@ -207,6 +226,8 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
 
   // 发音人列表缓存（每个客户端一份，10 分钟有效）
   let voiceListCache = null;
+  // 公共形象列表缓存（每个客户端一份，10 分钟有效）
+  let appearanceListCache = null;
 
   return {
     post,
@@ -262,6 +283,23 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
       const seen = new Set(); const out = [];
       for (const it of items) { if (!it.qid || seen.has(it.qid)) continue; seen.add(it.qid); out.push(it); }
       voiceListCache = { at: now, items: out };
+      return out;
+    },
+
+    /** 公共形象列表：POST /api/2dvh/v1/material/appearance/list（控制台“系统人物”同源）；10 分钟缓存，按 id 去重；只读查询、不计费 */
+    async appearanceList() {
+      const now = Date.now();
+      if (appearanceListCache && now - appearanceListCache.at < 10 * 60 * 1000) return appearanceListCache.items;
+      const items = [];
+      for (let pageNo = 1; pageNo <= 5; pageNo += 1) {
+        const d = await post('/api/2dvh/v1/material/appearance/list', { pageNo, pageSize: 100 });
+        const rows = Array.isArray(d?.result) ? d.result : (Array.isArray(d) ? d : []);
+        for (const r of rows) items.push(normalizeAppearance(r));
+        if (rows.length < 100) break;
+      }
+      const seen = new Set(); const out = [];
+      for (const it of items) { if (it.id == null || seen.has(it.id)) continue; seen.add(it.id); out.push(it); }
+      appearanceListCache = { at: now, items: out };
       return out;
     },
 

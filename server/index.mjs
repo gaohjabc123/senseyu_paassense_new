@@ -15,6 +15,7 @@ import { getConfig } from './lib/config.mjs';
 import { VERSION } from './lib/version.mjs';
 import { TokenManager } from './lib/token.mjs';
 import { createRuyingClient, normalizeDuration, TASK_STATUS_TEXT } from './lib/ruying.mjs';
+import { DEMO_AVATARS } from './lib/demo-avatars.mjs';
 import { KbStore } from './lib/kb.mjs';
 import { answerQuestion, completeDeepSeek } from './lib/answer.mjs';
 import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveChannelParam, buildDecorationTaskBody, buildContentRepoBody, buildWarmingBody, buildTranscodeBody, buildTransitionBody, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
@@ -890,6 +891,12 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       // 未登录或演示环境：只给服务端默认音色（晓悦），下拉框不至于空着
       if (mode !== 'real' || !ctx.access.canReal) return ok(res, { voices: cfg.ttsQid ? [{ qid: cfg.ttsQid, voiceName: '晓悦', materialName: '女声-甜美-晓悦', gender: 2 }] : [] });
       return ok(res, { voices: await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.voiceList() });
+    }
+    if (p === '/api/avatar/list' && m === 'GET') {
+      const mode = modeOf(req, ctx);
+      // 未登录或演示环境：只给 8 个系统形象样例（控制台截图里那批，真实数据），选择器不至于空着
+      if (mode !== 'real' || !ctx.access.canReal) return ok(res, { avatars: DEMO_AVATARS });
+      return ok(res, { avatars: await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.appearanceList() });
     }
     if (p === '/api/tasks' && m === 'GET') return ok(res, await opTaskList(ctx, () => modeOf(req, ctx), url.searchParams));
     if (p === '/api/tasks/import' && m === 'POST') {

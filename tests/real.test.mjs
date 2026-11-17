@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, pollUntilDone, KB_TEXT, SUPER, superClient, setupTenant, fund } from './helpers.mjs';
-import { normalizeDuration } from '../server/lib/ruying.mjs';
+import { normalizeDuration, normalizeAppearance } from '../server/lib/ruying.mjs';
 
 const calls = [];
 let invalidateNext = false;
@@ -58,6 +58,11 @@ async function fakeFetch(url, init = {}) {
       { id: 1, materialName: '女声-甜美-晓悦', extendParam: JSON.stringify({ qid: 'qid-a', voiceName: '晓悦', gender: 2 }) },
       { id: 2, materialName: '女声-甜美-晓悦', extendParam: JSON.stringify({ qid: 'qid-a', voiceName: '晓悦', gender: 2 }) },
       { id: 3, materialName: '男声-沉稳-云泽', extendParam: JSON.stringify({ qid: 'qid-b', voiceName: '云泽', gender: 1 }) },
+    ] });
+    case '/api/2dvh/v1/material/appearance/list': return ok({ pagination: { pageNo: 1, numberPages: 1, numberRecords: 3, pageSize: 100, startIndex: 0 }, result: [
+      { id: 4255826, materialName: '子沫_校园_站姿', thumbnailUrl: 'https://cdn.invalid/a.png', pkgUrl: 'https://cdn.invalid/a.zip', extendParam: JSON.stringify({ faceFeatureId: 'ff-zimo', gender: 1, avatarType: 1 }) },
+      { id: 4255826, materialName: '子沫_校园_站姿', thumbnailUrl: 'https://cdn.invalid/a.png', pkgUrl: 'https://cdn.invalid/a.zip', extendParam: JSON.stringify({ faceFeatureId: 'ff-zimo', gender: 1, avatarType: 1 }) },
+      { id: 3662484, materialName: '杜老师-交互数字人', thumbnailUrl: 'https://cdn.invalid/b.png', pkgUrl: 'https://cdn.invalid/b.zip', extendParam: JSON.stringify({ faceFeatureId: 'ff-du', gender: 2, avatarType: 3 }) },
     ] });
     case '/api/2dvh/v1/material/single/image/video/create': return ok({ id: 7788 });
     case '/api/2dvh/v1/material/video/create': return ok(66001);
@@ -158,6 +163,36 @@ test('发音人列表：GET /api/voice/list 返回规整去重后的列表', asy
   assert.deepEqual(r.data.voices.map((v) => v.qid), ['qid-a', 'qid-b']);
   assert.equal(r.data.voices[0].materialName, '女声-甜美-晓悦');
   assert.equal(r.data.voices[1].voiceName, '云泽');
+});
+
+test('公共形象规整：extendParam 里的 faceFeatureId / 性别 / 类型解析', () => {
+  const a = normalizeAppearance({ id: 4255826, materialName: '子沫_校园_站姿', thumbnailUrl: 'https://cdn.invalid/a.png', pkgUrl: 'https://cdn.invalid/a.zip', extendParam: JSON.stringify({ faceFeatureId: 'ff-zimo', gender: 1, avatarType: 1 }) });
+  assert.equal(a.name, '子沫_校园_站姿');
+  assert.equal(a.faceFeatureId, 'ff-zimo');
+  assert.equal(a.thumbnailUrl, 'https://cdn.invalid/a.png');
+  assert.equal(a.pkgUrl, 'https://cdn.invalid/a.zip');
+  assert.equal(a.gender, 1);
+  assert.equal(a.avatarType, 1);
+  const b = normalizeAppearance({ id: 3662484, materialName: '杜老师-交互数字人', extendParam: JSON.stringify({ faceFeatureId: 'ff-du', gender: 2, avatarType: 3 }) });
+  assert.equal(b.avatarType, 3, '交互数字人 avatarType 为 3');
+  assert.equal(b.thumbnailUrl, '', '缺缩略图时为空串，不抛错');
+  const c = normalizeAppearance({ id: 9, materialName: '无参数形象' });
+  assert.equal(c.faceFeatureId, '', '缺 extendParam 时编号为空串，不抛错');
+});
+
+test('公共形象列表：GET /api/avatar/list 真实环境返回规整去重后的列表，演示环境返回 8 个样例', async () => {
+  const r = await s.get('/api/avatar/list', 'real');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.avatars.length, 2, '同一 id 出现两次应去重为一条');
+  assert.deepEqual(r.data.avatars.map((a) => a.name), ['子沫_校园_站姿', '杜老师-交互数字人']);
+  assert.equal(r.data.avatars[0].faceFeatureId, 'ff-zimo');
+  assert.equal(r.data.avatars[0].pkgUrl, 'https://cdn.invalid/a.zip');
+  assert.equal(r.data.avatars[1].avatarType, 3, '交互数字人 avatarType 为 3');
+  const d = await s.get('/api/avatar/list', 'mock');
+  assert.equal(d.code, 0, d.message);
+  assert.equal(d.data.avatars.length, 8, '演示环境给 8 个系统形象样例');
+  assert.ok(d.data.avatars.every((a) => a.name && a.thumbnailUrl && a.pkgUrl && a.faceFeatureId), '样例须含名称、缩略图、模型地址与编号');
+  assert.ok(d.data.avatars.some((a) => a.name === '子沫_校园_站姿'), '样例须含截图里的子沫');
 });
 
 test('图片数字人：带 videoName，param 是 JSON 字符串，duration 为整数且 ≥5；任务查询走 task/info {ids}', async () => {

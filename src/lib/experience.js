@@ -75,7 +75,21 @@ export function experienceView(s, cap, opts = {}) {
         ? [['', '正在加载发音人列表…']]
         : [['', '默认音色（晓悦）'], ...s.voiceOptions.map((v) => [v.qid, v.materialName || v.voiceName || v.qid])];
     }
-    if (f.type === 'images') {
+    if (f.type === 'avatarPicker') {
+      // 系统形象选择器（对齐如影控制台“人物选择”）：缩略图网格，点一个填入下面的编号与模型地址
+      const avatars = s.avatarOptions;
+      const selected = String(e.params.faceFeatureId || '');
+      if (!avatars) {
+        control = `<div class="avatar-picker__empty">正在加载系统形象列表…</div>`;
+      } else if (!avatars.length) {
+        control = `<div class="avatar-picker__empty">系统形象列表为空或加载失败，可直接在下方填写编号与模型地址。</div>`;
+      } else {
+        control = `<div class="avatar-picker" role="group" aria-label="系统形象">${avatars.map((a) => {
+          const on = !!selected && !!a.faceFeatureId && String(a.faceFeatureId) === selected;
+          return `<button type="button" class="avatar-pick${on ? ' avatar-pick--selected' : ''}" data-action="exp-pick-avatar" data-face="${esc(a.faceFeatureId || '')}" data-url="${esc(a.pkgUrl || '')}" data-name="${esc(a.name || '')}" aria-pressed="${on ? 'true' : 'false'}" ${busy ? 'disabled' : ''}><img src="${esc(a.thumbnailUrl || '')}" alt="${esc(a.name || '系统形象')}" loading="lazy" />${esc(a.name || '')}</button>`;
+        }).join('')}</div>`;
+      }
+    } else if (f.type === 'images') {
       // 多图上传（对齐如影「图片编辑信息」弹窗）：上传框 + 缩略图 + 地址框。
       // 值仍是换行分隔的图片地址，与服务端 buildImageEditBody 的解析口径一致，请求体不动。
       const urls = String(val).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);

@@ -24,6 +24,7 @@ const state = {
   navCollapsed: (() => { try { return localStorage.getItem('ruying-nav-collapsed') === '1'; } catch { return false; } })(),
   config: null, configError: null,
   voiceOptions: null, voiceListFailed: false, // 平台发音人列表（/api/voice/list）：null=未加载，[]=加载失败或为空
+  avatarOptions: null, avatarListFailed: false, // 平台公共形象列表（/api/avatar/list）：null=未加载，[]=加载失败或为空
   taskCenter: { status: 'all', cap: 'all', q: '', list: [], total: 0, loading: false, error: null, imported: false }, // 任务中心列表与筛选
   modeSwitching: false, modeError: null,
   capFilter: 'all',
@@ -239,6 +240,7 @@ function applyRoute() {
   }
   if ((r.view === 'overview' && V.canUse(state, SHORTCUT_MODULE.chat)) || (r.view === 'create' && state.createTab === 'chat')) loadKb();
   if ((r.view === 'experience' && r.capId === 'voice-tts') || r.view === 'create') loadVoiceList();
+  if ((r.view === 'experience' && r.capId === 'video-script') || r.view === 'create') loadAvatarList();
   if (r.view === 'taskcenter') loadTaskCenter();
   if (r.view !== 'taskcenter') stopTaskCenterTimer();
   if (r.view === 'settings' && state.mode === 'real') loadToken();
@@ -260,6 +262,21 @@ async function loadVoiceList() {
     state.voiceListFailed = false;
   } catch { state.voiceOptions = []; state.voiceListFailed = true; }
   voiceListLoading = false;
+  render();
+}
+
+/* ================= 系统形象列表 ================= */
+/** 公共形象列表：只拉一次（服务端 10 分钟缓存），失败时留空数组、选择器退回手动填写 */
+let avatarListLoading = false;
+async function loadAvatarList() {
+  if (state.avatarOptions || avatarListLoading) return;
+  avatarListLoading = true;
+  try {
+    const d = await api.avatarList();
+    state.avatarOptions = Array.isArray(d?.avatars) ? d.avatars : [];
+    state.avatarListFailed = false;
+  } catch { state.avatarOptions = []; state.avatarListFailed = true; }
+  avatarListLoading = false;
   render();
 }
 
@@ -822,6 +839,12 @@ const actions = {
     const field = el.dataset.field; const value = el.dataset.value || '';
     if (!field || !value) return;
     state.exp.params[field] = value; render(); toast('已填入默认形象图');
+  },
+  'exp-pick-avatar': (el) => {
+    const face = el.dataset.face || ''; const url = el.dataset.url || ''; const name = el.dataset.name || '';
+    if (!face || !url) return;
+    state.exp.params.faceFeatureId = face; state.exp.params.modelUrl = url; render();
+    toast(name ? `已选形象 ${name}，编号与模型地址已填入` : '已填入形象编号与模型地址');
   },
   'exp-next': (el) => {
     const step = (NEXT_STEPS[state.exp.capId] || []).find((x) => x.cap === el.dataset.cap);

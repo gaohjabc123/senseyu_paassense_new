@@ -92,6 +92,8 @@ export const api = {
   tts: (text, purpose, opts = {}) => request('tts', { method: 'POST', body: { text, purpose, ...opts }, timeoutMs: 90000 }),
   /** 发音人列表：GET /api/voice/list，返回 { voices: [{ qid, voiceName, materialName, gender }] } */
   voiceList: () => request('voice/list'),
+  /** 公共形象列表：GET /api/avatar/list，返回 { avatars: [{ id, name, thumbnailUrl, pkgUrl, faceFeatureId, gender, avatarType }] } */
+  avatarList: () => request('avatar/list'),
   avatar: (payload) => post('avatar', payload),
   /** 单次查询任务状态（不轮询），供任务历史同步使用；返回 { status, result, mode, ... } */
   task: (id) => request('task', { method: 'POST', body: { id }, timeoutMs: 20000 }),

@@ -76,8 +76,8 @@ export const CAPABILITIES = [
     experience: {
       output: 'json', submit: '生成脚本 JSON',
       requires: [
-        { text: '形象 face_feature_id', cap: 'avatar-train', config: 'faceFeatureConfigured', note: '真实模式：填了形象与 zip 包地址时，脚本会提交到平台生成视频；服务端已配置时留空即可；想用自己的形象先去形象复刻训一个' },
-        { text: '形象 zip 包地址', cap: 'avatar-train', config: 'avatarModelConfigured', note: '真实模式：提交生成时与 face_feature_id 一起用；服务端已配置时留空即可；否则在平台控制台的形象详情里复制模型文件地址' },
+        { text: '形象 face_feature_id', cap: 'avatar-train', config: 'faceFeatureConfigured', note: '真实模式：点「系统形象」选一个公共形象，或填自己训好的形象编号，脚本会提交到平台生成视频；服务端已配置时留空即可；想用自己的形象先去形象复刻训一个' },
+        { text: '形象 zip 包地址', cap: 'avatar-train', config: 'avatarModelConfigured', note: '真实模式：点系统形象自动填入，或在平台控制台的形象详情里复制模型文件地址；与 face_feature_id 一起用；服务端已配置时留空即可' },
         { text: '台词至少 10 个字', note: '真实模式：只生成脚本 JSON 时不提交、不计费；填了形象才会提交生成视频' },
       ],
       fields: [
@@ -85,10 +85,11 @@ export const CAPABILITIES = [
         { key: 'lines', label: '台词内容', type: 'textarea', default: '大家好，欢迎来到本章课程。', hint: '提交到平台生成时，台词至少 10 个字' },
         { key: 'subtitle', label: '字幕样式', type: 'select', default: '底部白字', options: [['底部白字', '底部白字'], ['无字幕', '无字幕'], ['顶部标题', '顶部标题']] },
         { key: 'videoName', label: '视频名称（提交生成时用）', type: 'text', default: '第3章-高级效果', hint: '只传台词不提交时可留空' },
-        { key: 'faceFeatureId', label: '形象 face_feature_id（提交生成时用）', type: 'text', default: '', placeholder: '训练完成后在平台控制台查看', hint: '服务端已配置时留空即可；填自己训好的形象可覆盖' },
-        { key: 'modelUrl', label: '形象 zip 包地址（提交生成时用）', type: 'text', default: '', placeholder: 'https://…/avatar.zip', hint: '服务端已配置时留空即可；否则在平台控制台的形象详情里复制模型文件地址' },
+        { key: 'avatar', label: '系统形象（点选）', type: 'avatarPicker', optionsFrom: 'avatarList', hint: '平台公共形象（60 个）；点一个自动填入下面的编号与模型地址，也可直接填自己训好的形象' },
+        { key: 'faceFeatureId', label: '形象 face_feature_id（提交生成时用）', type: 'text', default: '', placeholder: '训练完成后在平台控制台查看', hint: '点上方系统形象自动填入；服务端已配置时留空即可；填自己训好的形象可覆盖' },
+        { key: 'modelUrl', label: '形象 zip 包地址（提交生成时用）', type: 'text', default: '', placeholder: 'https://…/avatar.zip', hint: '点上方系统形象自动填入；服务端已配置时留空即可；否则在平台控制台的形象详情里复制模型文件地址' },
       ],
-      notes: '输出的是可直接传给视频合成接口的 param 结构（版本 0.0.17），不单独计费；填了形象 face_feature_id 与 zip 包地址时，真实模式会把这份脚本提交到平台生成视频。',
+      notes: '输出的是可直接传给视频合成接口的 param 结构（版本 0.0.17），不单独计费；点「系统形象」选一个公共形象、或填好形象 face_feature_id 与 zip 包地址时，真实模式会把这份脚本提交到平台生成视频。',
       mockTitle: '视频脚本 param 结构',
       mockJson: { version: '0.0.17', video_format: 'mp4', resolution: [1080, 1920], bit_rate: 8, frame_rate: 25, digital_role: { face_feature_id: 'your_face_feature_id', name: 'your_face_feature_id', url: 'https://example.com/avatar.zip', position: { x: 0, y: 0, scale: 1.0 } }, tts_config: { language: 'zh-CN', pitch_offset: 0, speed_ratio: 1, volume: 100 }, tts_query: { content: '大家好，欢迎来到本章课程。', ssml: false }, subtitle: { scale: 1, rgba: [255, 255, 255, 255], font_size: 20, font_family: 'Noto Sans S Chinese Black' }, watermark: { show: true, content: 'AIGenerated' } },
     },

@@ -182,6 +182,35 @@ test('语音合成 TTS：渲染出发音人下拉、三个滑块与 2000 字上�
   assert.ok(experienceView(s2, cap).includes('正在加载发音人列表'), '列表未加载时须显示占位');
 });
 
+test('视频脚本编辑：系统形象选择器（点选填入编号与模型地址）', async () => {
+  const { experienceView } = await import('../src/lib/experience.js');
+  const cap = capById('video-script');
+  assert.ok(cap, '找不到 video-script');
+  const byKey = Object.fromEntries((cap.experience.fields || []).map((f) => [f.key, f]));
+  assert.equal(byKey.avatar.type, 'avatarPicker');
+  assert.equal(byKey.avatar.optionsFrom, 'avatarList');
+  const keys = Object.keys(byKey);
+  assert.ok(keys.indexOf('avatar') < keys.indexOf('faceFeatureId'), '选择器须在编号字段之前');
+  assert.ok(String(byKey.faceFeatureId.hint || '').includes('系统形象'), '编号字段须说明可点选填入');
+  const avatars = [
+    { id: 1, name: '子沫_校园_站姿', thumbnailUrl: 'https://cdn.invalid/a.png', pkgUrl: 'https://cdn.invalid/a.zip', faceFeatureId: 'ff-zimo', gender: 1, avatarType: 1 },
+    { id: 2, name: '杜老师-交互数字人', thumbnailUrl: 'https://cdn.invalid/b.png', pkgUrl: 'https://cdn.invalid/b.zip', faceFeatureId: 'ff-du', gender: 2, avatarType: 3 },
+  ];
+  const s = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, avatarOptions: avatars };
+  const html = experienceView(s, cap);
+  for (const needle of ['系统形象', '子沫_校园_站姿', '杜老师-交互数字人', 'data-action="exp-pick-avatar"', 'data-face="ff-zimo"', 'data-url="https://cdn.invalid/a.zip"', 'https://cdn.invalid/a.png']) {
+    assert.ok(html.includes(needle), `渲染缺失：${needle}`);
+  }
+  // 已选形象高亮
+  const s2 = { ...s, exp: { running: false, params: { faceFeatureId: 'ff-du' }, error: null, result: null } };
+  assert.ok(experienceView(s2, cap).includes('avatar-pick--selected'), '已选形象须高亮');
+  // 列表未加载时显示占位，不空着
+  const s3 = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, avatarOptions: null };
+  assert.ok(experienceView(s3, cap).includes('正在加载系统形象列表'), '列表未加载时须显示占位');
+  const s4 = { ...s3, avatarOptions: [] };
+  assert.ok(experienceView(s4, cap).includes('可直接在下方填写'), '列表为空时须提示手动填写');
+});
+
 test('音色复刻：同意音频独立上传（留空时复用训练音频）', () => {
   const cap = capById('voice-clone');
   assert.ok(cap, '找不到 voice-clone');
