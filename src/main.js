@@ -280,6 +280,15 @@ async function loadAvatarList() {
   render();
 }
 
+/** 环境或登录人变了：发音人/系统形象列表按新身份重拉。
+ * 否则先在演示环境打开过页面、再登录切到真实环境，下拉框仍显示演示的 8 个样例
+ * （loadAvatarList/loadVoiceList 只在列表为空时才拉，旧列表不为空就直接返回）。 */
+function resetOptionLists() {
+  state.avatarOptions = null; state.avatarListFailed = false;
+  state.voiceOptions = null; state.voiceListFailed = false;
+  loadAvatarList(); loadVoiceList();
+}
+
 /* ================= 任务中心 ================= */
 /** 任务中心列表：首次打开先把这台浏览器里存过的任务编号导入一次（真实环境），再按筛选拉列表 */
 async function loadTaskCenter() {
@@ -325,6 +334,7 @@ async function loadConfig() {
     const err = toApiError(e);
     if (err.code === 'REAL_NOT_CONFIGURED' && state.mode === 'real') {
       setMode('mock'); state.mode = 'mock';
+      resetOptionLists();
       toast('真实环境暂不可用，已切回演示环境');
       return loadConfig();
     }
@@ -343,6 +353,7 @@ async function refreshMe(me) {
   if (me === null) { try { state.me = await api.me(); } catch { /* 保持访客 */ } }
   if ((state.me.user?.id ?? null) !== prevUser) {
     state.kb = freshKb(); state.chat.messages = []; state.adm = initialAdminState(); state.token = { loading: false, data: null, error: null };
+    resetOptionLists();
   }
   if (state.mode === 'real' && !state.me.access?.canReal) { setMode('mock'); state.mode = 'mock'; }
   await reloadWorks();
@@ -723,6 +734,7 @@ async function confirmMode() {
   try {
     state.config = await api.switchMode(next);
     setMode(next); state.mode = next;
+    resetOptionLists();
     state.token = { loading: false, data: null, error: null };
     toast(next === 'real' ? '已切换到真实环境' : '已切换到演示环境');
     if (state.view === 'settings' && next === 'real') loadToken();
