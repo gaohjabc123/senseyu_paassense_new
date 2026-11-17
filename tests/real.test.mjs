@@ -450,6 +450,33 @@ test('视频脚本：7 步字段进 param（格式/水印/位置/三滑块/发�
   assert.equal(bad.code, 'INVALID_INPUT');
 });
 
+test('直播脚本：4 步字段进 param（人物/内容/装饰/美颜；演示环境按表单实时出 JSON）', async () => {
+  const r = await s.post('/api/capability/run', { id: 'live-script', params: {
+    name: '双十一专场脚本', script: '欢迎来到直播间，今天为大家带来三款好物。',
+    qid: 'qid-voice-1', speed: 1.5, volume: 300, pitch: -10,
+    foregroundUrl: 'https://cdn.invalid/fg.png', bgUrl: 'https://cdn.invalid/bg.png', whitenStrength: 0.5,
+  } }, 'mock');
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.sync, true);
+  const p = r.data.result.json;
+  assert.equal(p.version, '0.0.1');
+  assert.equal(p.recycle, 0);
+  assert.equal(p.stream_mode, true);
+  const scene = p.sceneList[0];
+  assert.equal(scene.digital_role.face_feature_id, 'your_face_feature_id', '未填形象时给占位，不提交');
+  assert.equal(scene.digital_role.scale, 1);
+  assert.ok(!('position' in scene.digital_role));
+  assert.equal(scene.tts_config.qid, 'qid-voice-1');
+  assert.equal(scene.tts_config.language, '');
+  assert.equal(scene.tts_config.speed_ratio, 1.5);
+  assert.equal(scene.tts_config.volume, 300);
+  assert.equal(scene.tts_config.pitch_offset, -10);
+  assert.equal(scene.tts_query.content, '欢迎来到直播间，今天为大家带来三款好物。');
+  assert.deepEqual(scene.foregrounds[0].rect, [0, 0, 300, 300]);
+  assert.equal(scene.backgrounds[0].cycle, true);
+  assert.equal(scene.effects.beautify.whitenStrength, 0.5);
+});
+
 test('知识库管理：真实模式下载文档存进服务端知识库，问答能命中', async () => {
   calls.length = 0;
   const r = await s.post('/api/capability/run', { id: 'nlp-kb', params: {
@@ -487,9 +514,14 @@ test('互动直播与超级直播间：创建直播间返回会话编号与拉�
   assert.equal(r.data.result.json.sessionId, 'sess_test_1');
   assert.equal(r.data.result.json.pullHlsUrl, 'https://cdn.invalid/live.m3u8');
   assert.match(r.data.result.realModeNote, /尚未开播/);
-  const pro = await s.post('/api/capability/run', { id: 'live-pro', params: { name: '品牌旗舰', avatarType: '5', script: '欢迎来到直播间。' } }, 'real');
+  const pro = await s.post('/api/capability/run', { id: 'live-pro', params: { name: '品牌旗舰', modelUrl: 'https://cdn.invalid/model.zip', script: '欢迎来到直播间。' } }, 'real');
   assert.equal(pro.code, 0, pro.message);
   assert.match(pro.data.result.json.controlApi, /super\/pro\/channel\/control/);
+  const proReq = calls.filter((c) => c.path === '/api/2dvh/v2/material/live/channel/create').pop();
+  const proParam = JSON.parse(proReq.body.param);
+  assert.equal(proParam.sceneList[0].digital_role.url, 'https://cdn.invalid/model.zip', '超级直播间 digital_role 用模型 zip 地址 url，不是预热素材 fileId');
+  assert.ok(!('avatarType' in proParam.sceneList[0].digital_role), 'avatarType 是训练参数，不是创建参数，不许发');
+  assert.equal(proReq.body.streamName, undefined, '不填 Stream Name 就不发该字段');
 });
 
 test('视频互动直播：创建装修任务返回父任务 id', async () => {

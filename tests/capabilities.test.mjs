@@ -262,6 +262,37 @@ test('视频脚本编辑：7 步分组（基础/人物/人物设置/内容/装�
   assert.ok(html.includes('导入 JSON'), '视频脚本须有 JSON 导入入口');
 });
 
+test('直播脚本编辑：4 步分组（人物/内容/装饰/设置）与新字段', async () => {
+  const { experienceView } = await import('../src/lib/experience.js');
+  const cap = capById('live-script');
+  assert.ok(cap, '找不到 live-script');
+  const byKey = Object.fromEntries((cap.experience.fields || []).map((f) => [f.key, f]));
+  assert.deepEqual([...new Set(cap.experience.fields.map((f) => f.section))], ['人物', '内容', '装饰', '设置'], '步骤须按控制台顺序');
+  assert.equal(byKey.avatar.type, 'avatarPicker');
+  assert.equal(byKey.script.type, 'textarea');
+  assert.equal(byKey.qid.optionsFrom, 'voiceList');
+  assert.equal(byKey.speed.default, 1);
+  assert.equal(byKey.volume.default, 100);
+  assert.equal(byKey.pitch.default, 0);
+  assert.equal(byKey.foregroundUrl.upload, 'image');
+  assert.equal(byKey.bgUrl.upload, 'image');
+  assert.equal(byKey.fgW.default, 300, '前景 rect 默认 [0,0,300,300]');
+  assert.equal(byKey.fgH.default, 300);
+  assert.ok(!byKey.fgRotate, '直播前景无 rotation（控制台导出无此键）');
+  assert.ok(!byKey.bgmUrl, '直播无背景音乐（控制台导出无此键）');
+  assert.ok(!byKey.scene, '脚本场景下拉是旧版臆测，控制台没有，须删掉');
+  const beautyKeys = Object.keys(byKey).filter((k) => byKey[k].section === '设置' && byKey[k].type === 'slider');
+  assert.equal(beautyKeys.length, 38, '美颜须有 38 个滑块');
+  assert.equal(byKey.whitenStrength.default, 0.3);
+  assert.equal(byKey.chinLength.min, -1, '下巴长短范围 -1~1');
+  const s = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, avatarOptions: [], voiceOptions: [] };
+  const html = experienceView(s, cap);
+  const order = ['人物', '内容', '装饰', '设置'].map((n) => html.indexOf(`>${n}</h3>`));
+  assert.ok(order.every((i) => i >= 0), '步骤标题须全部渲染');
+  assert.ok(order.every((v, i, a) => i === 0 || v > a[i - 1]), '步骤标题须按顺序出现');
+  assert.ok(html.includes('导入 JSON'), '直播脚本须有 JSON 导入入口');
+});
+
 test('音色复刻：同意音频独立上传（留空时复用训练音频）', () => {
   const cap = capById('voice-clone');
   assert.ok(cap, '找不到 voice-clone');

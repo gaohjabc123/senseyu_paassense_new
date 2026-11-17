@@ -39,6 +39,31 @@ const state = {
   backStack: [], // 返回栈：走过的页面（本机内存，刷新清空），「返回」按钮按它回上一个页面
   token: { loading: false, data: null, error: null },
   works: listWorks(), worksError: null, localWorkCount: 0,
+  // 直播内测（控制台 liveTest 5 步）：会话、开播/心跳、接管队列、麦克风接管
+  livetest: {
+    name: '直播内测', scriptJson: null, scriptFileName: '', scriptText: '',
+    session: null, started: false, startedAt: 0, lastHeartbeatAt: 0, heartbeatError: null,
+    takeoverKind: 'text', takeoverStream: 'nonstream', takeoverText: '', takeoverAudioUrl: '',
+    queue: [], replaceFgFileId: '', replaceBgFileId: '',
+    micActive: false, micStatus: '', busy: '', error: null,
+  },
+  // 视频互动直播测试（控制台 multiVideoInteractiveTest 5 步）
+  multitest: {
+    name: '产品发布会互动直播', scriptJson: null, scriptFileName: '',
+    materialIds: '', rtmpUrl: '', callbackUrl: '',
+    session: null, started: false, startedAt: 0, lastHeartbeatAt: 0, heartbeatError: null,
+    queueType: '0', queueText: '', queueAudioUrl: '', queueScript: '', queueMaterialId: '', queuePriority: 0,
+    queue: [], materials: [], conflict: 'force', busy: '', error: null,
+  },
+  // 账单（控制台 bill 9 页签）：默认近 30 天
+  bill: {
+    tab: 'video', from: (() => { const d = new Date(Date.now() - 29 * 86400000); return d.toISOString().slice(0, 10); })(),
+    to: new Date().toISOString().slice(0, 10), statRange: '1', algoSubType1: '', algoSubType2: '',
+    rows: [], usedSum: null, pagination: null, note: '', algoGroup: 1, loading: false, error: null, loaded: false,
+  },
+  // 互动直播管理：脚本库 + 直播会话
+  livescripts: { tab: 'scripts', scripts: [], sessions: [], note: '', loading: false, error: null },
+  expScriptLoaded: '', // 分享链接载入过的脚本 id（同一链接不重复载入）
   dialog: null,
   tour: -1,
   me: null, route: { view: DEFAULT_VIEW },
@@ -71,11 +96,11 @@ function updateTopbar() {
 
 /* ================= 渲染：只更新内容区 ================= */
 const adminTitle = (v) => { const r = ADMIN_ROUTES[v]; return r ? (state.me?.teaching?.isSchool && r.schoolTitle) || r.title : ''; };
-const CONSOLE_TITLE = { overview: '工作台总览', create: '创作中心', taskcenter: '任务中心', tasks: '我的作品', settings: '环境与配置', experience: '能力体验' };
+const CONSOLE_TITLE = { overview: '工作台总览', create: '创作中心', taskcenter: '任务中心', livetest: '直播内测', multitest: '视频互动直播测试', livescripts: '互动直播管理', bill: '账单', tasks: '我的作品', settings: '环境与配置', experience: '能力体验' };
 /* 站内页（产品）与登录页：站内页进统一壳但不显示工作台标题栏；登录页保持全宽 */
 const isSiteLayout = (v) => v === 'login';
 const isSitePage = (v) => SITE_VIEWS.includes(v);
-const isWorkspace = (v) => ['overview', 'create', 'taskcenter', 'tasks', 'settings', 'experience'].includes(v);
+const isWorkspace = (v) => ['overview', 'create', 'taskcenter', 'livetest', 'multitest', 'livescripts', 'bill', 'tasks', 'settings', 'experience'].includes(v);
 const userSlot = document.getElementById('user-slot');
 let userSlotKey = null;
 
@@ -89,7 +114,7 @@ function pageHtml() {
   }
   const page = {
     home: V.homeView, capabilities: V.capabilitiesView, scenarios: V.scenariosView, integration: V.integrationView,
-    overview: V.overviewView, create: V.createView, taskcenter: V.taskCenterView, tasks: V.tasksView, settings: V.settingsView,
+    overview: V.overviewView, create: V.createView, taskcenter: V.taskCenterView, livetest: V.liveTestView, multitest: V.multiTestView, livescripts: V.liveScriptsView, bill: V.billView, tasks: V.tasksView, settings: V.settingsView,
   }[s.view] || V.homeView;
   return page(s);
 }
@@ -198,7 +223,11 @@ async function workOp(fn, okText) {
 /* ================= 路由（hash） ================= */
 function parseHash() {
   const h = decodeURIComponent(location.hash.replace(/^#/, ''));
-  if (h.startsWith('experience/')) return { view: 'experience', capId: h.slice(11) };
+  if (h.startsWith('experience/')) {
+    const [path, query] = h.slice(11).split('?');
+    const q = new URLSearchParams(query || '');
+    return { view: 'experience', capId: path, scriptId: q.get('script') || '' };
+  }
   const adm = parseAdminHash(h);
   if (adm) return adm;
   if (h === 'catalog') return { view: 'capabilities' }; // 能力目录已并进能力矩阵，旧链接/书签直接跳过去
@@ -243,6 +272,15 @@ function applyRoute() {
   if ((r.view === 'experience' && r.capId === 'video-script') || r.view === 'create') loadAvatarList();
   if (r.view === 'taskcenter') loadTaskCenter();
   if (r.view !== 'taskcenter') stopTaskCenterTimer();
+  if (r.view === 'livetest' || r.view === 'multitest') { /* 心跳由开播时启动，离开页面即停（见 stopLiveTimers） */ }
+  if (r.view !== 'livetest' && r.view !== 'multitest') stopLiveTimers();
+  if (r.view === 'bill' && !state.bill.loaded) loadBill();
+  if (r.view === 'livescripts') loadLiveScripts();
+  // 分享链接：#experience/live-script?script=<id>，打开即进编辑器并载入该脚本（同一链接只载一次）
+  if (r.view === 'experience' && r.capId === 'live-script' && r.scriptId && state.expScriptLoaded !== r.scriptId) {
+    state.expScriptLoaded = r.scriptId;
+    loadSharedLiveScript(r.scriptId);
+  }
   if (r.view === 'settings' && state.mode === 'real') loadToken();
   if (r.view === 'create' && state.createTab === 'video' && state.tour < 0 && shouldShowTour(localStorage)) state.tour = 0;
   if (r.view !== 'create') state.tour = -1;
@@ -326,6 +364,188 @@ function startTaskCenterTimer() {
 }
 function stopTaskCenterTimer() { if (taskCenterTimer) { clearInterval(taskCenterTimer); taskCenterTimer = null; } }
 
+/* ================= 直播内测 / 视频互动直播测试 ================= */
+/** 心跳：开播后每 60 秒一次；心跳丢失会在阈值后被动关闭；离开页面或关播即停 */
+let liveHeartbeatTimer = null;
+function startLiveHeartbeat(kind) {
+  stopLiveTimers();
+  liveHeartbeatTimer = setInterval(async () => {
+    const t = kind === 'multi' ? state.multitest : state.livetest;
+    if (!t.session?.sessionId || !t.started) { stopLiveTimers(); return; }
+    try {
+      const d = await (kind === 'multi' ? api.multiTest.heartbeat(t.session.sessionId) : api.liveTest.heartbeat(t.session.sessionId));
+      t.lastHeartbeatAt = d.at || Date.now(); t.heartbeatError = null;
+    } catch (e) {
+      t.heartbeatError = toApiError(e).message;
+      stopLiveTimers();
+    }
+    if (state.view === (kind === 'multi' ? 'multitest' : 'livetest')) render();
+  }, 60000);
+}
+function stopLiveTimers() {
+  if (liveHeartbeatTimer) { clearInterval(liveHeartbeatTimer); liveHeartbeatTimer = null; }
+  stopMic('leave');
+}
+
+/** 麦克风接管：浏览器采音 → 重采样 16k 单声道 PCM → WebSocket 上行（文档 V1.5.2 协议）。
+ * WS 地址由服务端 /api/live/takeover-ws 给（含 Token），前端不打它的日志、不展示。 */
+let micSession = null;
+const MIC_DOWN = { 1: '鉴权失败', 2: '等待就绪', 20: '排队完成', 19: '开始播放', 18: '完成', 4: '停止发送', 5: '发送失败', 6: '未就绪，可重试', 99: '结束确认' };
+async function startMic() {
+  const t = state.livetest;
+  if (micSession || !t.session?.sessionId) return;
+  if (state.mode !== 'real') { t.micStatus = '演示环境没有真实直播间，麦克风接管只在真实环境可用。'; return render(); }
+  t.micStatus = '正在连接…'; render();
+  let wsUrl;
+  try {
+    const d = await api.liveTest.takeoverWs(t.session.sessionId);
+    if (!d.available) { t.micStatus = d.reason || '麦克风接管当前不可用。'; return render(); }
+    wsUrl = d.wsUrl;
+  } catch (e) { t.micStatus = `取接管地址失败：${toApiError(e).message}`; return render(); }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch {
+    t.micStatus = '拿不到麦克风权限：请在浏览器地址栏允许本站使用麦克风后重试。';
+    return render();
+  }
+  const traceId = `mic-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const ws = new WebSocket(wsUrl);
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const source = audioCtx.createMediaStreamSource(stream);
+  const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  let begun = false;
+  processor.onaudioprocess = (ev) => {
+    if (!begun || ws.readyState !== WebSocket.OPEN) return;
+    const input = ev.inputBuffer.getChannelData(0);
+    const buf = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) buf[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)));
+    ws.send(buf.buffer);
+  };
+  source.connect(processor); processor.connect(audioCtx.destination);
+  micSession = { ws, stream, audioCtx, processor, traceId };
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ code: 0, message: 'begin', commandTraceId: traceId, priority: 1 }));
+    begun = true;
+    t.micActive = true; t.micStatus = '麦克风接管中：正在向数字人送你的声音…';
+    render();
+  };
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    const label = MIC_DOWN[m.code];
+    if (m.code === 4) { t.micStatus = '平台要求停止发送，已自动关闭麦克风。'; stopMic('platform'); return; }
+    if (m.code === 1 || m.code === 5) { t.micStatus = `接管失败：${label || m.message || ''}。`; stopMic('error'); return; }
+    if (label) { t.micStatus = `麦克风接管中：${label}。`; render(); }
+  };
+  ws.onerror = () => { t.micStatus = '接管连接中断，请检查网络后重试。'; stopMic('error'); };
+  ws.onclose = () => { if (micSession) stopMic('close'); };
+}
+function stopMic(reason) {
+  const t = state.livetest;
+  const s = micSession;
+  if (!s) return;
+  micSession = null;
+  try { if (s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify({ code: 99, message: 'eof', commandTraceId: s.traceId })); } catch { /* ignore */ }
+  try { s.ws.close(); } catch { /* ignore */ }
+  try { s.processor.disconnect(); } catch { /* ignore */ }
+  try { s.audioCtx.close(); } catch { /* ignore */ }
+  for (const tr of s.stream.getTracks()) tr.stop();
+  t.micActive = false;
+  if (reason === 'leave') t.micStatus = '已离开页面，麦克风已关闭。';
+  else if (reason === 'user') t.micStatus = '麦克风接管已关闭。';
+  else if (reason === 'platform' || reason === 'error' || reason === 'close') { /* 状态已在调用处写好 */ }
+  if (state.view === 'livetest') render();
+}
+
+/** 视频互动直播：从平台刷新播放素材顺序（playback 查询） */
+async function refreshMultiPlayback() {
+  const t = state.multitest;
+  if (!t.session?.sessionId) return;
+  try {
+    const d = await api.multiTest.playback(t.session.sessionId);
+    t.materials = d.materials || [];
+  } catch (e) { t.error = toApiError(e); }
+  if (state.view === 'multitest') render();
+}
+/** 视频互动直播：从平台刷新接管队列（queue/list）；平台返回的行只看不删（没有删除接口） */
+async function refreshMultiQueue() {
+  const t = state.multitest;
+  if (!t.session?.sessionId) return;
+  try {
+    const d = await api.multiTest.queueList(t.session.sessionId);
+    t.queue = (d.queue || []).map((q) => ({ type: String(q.type ?? 0), content: q.content || '', status: q.status || '排队中', commandTraceId: q.commandTraceId || '', local: false }));
+  } catch (e) { t.error = toApiError(e); }
+  if (state.view === 'multitest') render();
+}
+
+/** 直播脚本文件读取（内测/互动直播共用）：只认含 sceneList[0].tts_query.content 的直播脚本 JSON */
+async function readLiveScriptFile(file, kind) {
+  const t = kind === 'multi' ? state.multitest : state.livetest;
+  try {
+    const text = await file.text();
+    const j = JSON.parse(text);
+    const scene = j?.sceneList?.[0];
+    if (!scene?.tts_query?.content) { toast('这个 JSON 不是直播脚本（缺少 sceneList[0].tts_query.content）。'); return; }
+    t.scriptJson = text; t.scriptFileName = file.name; t.scriptText = String(scene.tts_query.content);
+    toast(`已读取脚本 ${file.name}`);
+  } catch { toast('脚本文件读取失败：不是合法的 JSON。'); }
+  render();
+}
+/** 脚本库：上传一个直播脚本 JSON 存进本站脚本库 */
+async function uploadLiveScriptFile(file) {
+  try {
+    const text = await file.text();
+    const j = JSON.parse(text);
+    if (!j?.sceneList) { toast('这个 JSON 不是直播脚本。'); return; }
+    const name = file.name.replace(/\.json$/i, '').replace(/^liveScript_/, '') || '未命名脚本';
+    await api.liveScripts.create({ name, scriptJson: text, source: 'upload' });
+    await loadLiveScripts();
+    toast(`已存进脚本库《${name}》`);
+  } catch (e) { toast(toApiError(e).message); }
+}
+
+/* ================= 账单 ================= */
+async function loadBill() {
+  const b = state.bill;
+  if (b.loading) return;
+  b.loading = true; b.error = null;
+  if (state.view === 'bill') render();
+  try {
+    const d = await api.bill.list({ tab: b.tab, from: b.from, to: b.to, statRange: b.statRange, algoSubType1: b.algoSubType1, algoSubType2: b.algoSubType2 });
+    b.rows = d.rows || []; b.usedSum = d.usedSum ?? null; b.pagination = d.pagination || null;
+    b.note = d.note || ''; b.algoGroup = d.algoGroup ?? b.algoGroup; b.loaded = true;
+  } catch (e) { b.error = toApiError(e); }
+  b.loading = false;
+  if (state.view === 'bill') render();
+}
+
+/* ================= 互动直播管理 ================= */
+async function loadLiveScripts() {
+  const ls = state.livescripts;
+  if (ls.loading) return;
+  ls.loading = true; ls.error = null;
+  if (state.view === 'livescripts') render();
+  try {
+    const [a, b] = await Promise.all([api.liveScripts.list(), api.liveSessions()]);
+    ls.scripts = a.scripts || []; ls.sessions = b.sessions || []; ls.note = b.note || '';
+  } catch (e) { ls.error = toApiError(e); }
+  ls.loading = false;
+  if (state.view === 'livescripts') render();
+}
+
+/** 分享链接载入：#experience/live-script?script=<id>，打开即进编辑器并载入该脚本 */
+async function loadSharedLiveScript(id) {
+  try {
+    const d = await api.liveScripts.get(id);
+    const params = liveScriptJsonToParams(JSON.parse(d.script.scriptJson));
+    if (!params) return;
+    state.exp.params = { ...state.exp.params, ...params };
+    state.exp.result = null; state.exp.error = null;
+    render();
+    toast(`已载入分享的脚本《${d.script.name}》`);
+  } catch { /* 分享链接失效时静默，不挡页面 */ }
+}
+
 async function loadConfig() {
   state.configError = null;
   try {
@@ -389,6 +609,15 @@ function startTicker() {
       any = true;
       const el = viewRoot.querySelector(`[data-elapsed="${key}"]`);
       if (el) { const s = Math.floor((Date.now() - st.startedAt) / 1000); el.textContent = `已等待 ${s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`}`; }
+    }
+    // 直播开播时长：开播中且正在看对应页面时才走字
+    for (const [kind, st] of [['livetest', state.livetest], ['multitest', state.multitest]]) {
+      if (!st.started || !st.startedAt || state.view !== kind) continue;
+      any = true;
+      for (const el of viewRoot.querySelectorAll(`[data-live-elapsed="${kind}"]`)) {
+        const s = Math.floor((Date.now() - st.startedAt) / 1000);
+        el.textContent = s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+      }
     }
     if (!any) { clearInterval(startTicker.id); startTicker.id = null; }
   }, 1000);
@@ -726,14 +955,15 @@ function copyExperience() {
   navigator.clipboard.writeText(t).then(() => toast('已复制'), () => toast('复制失败，请手动选择文本复制'));
 }
 
-/** 视频脚本 JSON 下载：把当前结果的 param 存成本地文件（控制台「导出视频合成脚本」的同款文件） */
+/** 视频脚本 / 直播脚本 JSON 下载：把当前结果的 param 存成本地文件（控制台「导出视频合成脚本」/「导出直播脚本」的同款文件） */
 function downloadJsonExperience() {
   const r = state.exp.result;
   const t = r?.jsonText || (r?.json ? JSON.stringify(r.json, null, 2) : '');
   if (!t) return toast('没有可下载的 JSON');
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
-  const name = `videoScript_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+  const prefix = state.exp.capId === 'live-script' ? 'liveScript' : 'videoScript';
+  const name = `${prefix}_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([t], { type: 'application/json' }));
   a.download = name;
@@ -799,6 +1029,49 @@ function importVideoScriptJson(text) {
       else p[k] = v;
     }
   }
+  state.exp.params = { ...p };
+  state.exp.result = null; state.exp.error = null;
+  render();
+  toast('已导入脚本 JSON，表单已填好');
+}
+
+/** 直播脚本 JSON → 表单参数（控制台导出 / 本站下载 / 脚本库分享链接共用；缺的字段恢复默认） */
+function liveScriptJsonToParams(j) {
+  const scene = j?.sceneList?.[0];
+  if (!j || typeof j !== 'object' || !scene?.digital_role || !scene?.tts_query) return null;
+  const p = {};
+  const set = (k, v) => { if (v !== undefined && v !== null && v !== '') p[k] = v; };
+  set('name', j.name);
+  const dr = scene.digital_role;
+  set('avatarId', dr.id); set('faceFeatureId', dr.face_feature_id); set('avatarName', dr.name); set('modelUrl', dr.url);
+  const tc = scene.tts_config || {};
+  set('qid', tc.qid); set('pitch', tc.pitch_offset); set('speed', tc.speed_ratio); set('volume', tc.volume);
+  set('script', scene.tts_query.content);
+  const fg = (scene.foregrounds || [])[0];
+  if (fg) {
+    set('foregroundUrl', fg.url);
+    if (Array.isArray(fg.rect)) { set('fgX', fg.rect[0]); set('fgY', fg.rect[1]); set('fgW', fg.rect[2]); set('fgH', fg.rect[3]); }
+    set('fgStart', fg.start); set('fgDuration', fg.duration);
+  }
+  const bg = (scene.backgrounds || [])[0];
+  if (bg) { set('bgUrl', bg.url); set('bgStart', bg.start); set('bgDuration', bg.duration); }
+  const b = scene.effects?.beautify;
+  if (b) {
+    for (const [k, v] of Object.entries(b)) {
+      if (k === 'whiten_mode') p.whitenMode = String(v);
+      else if (k === 'smooth_mode') p.smoothMode = String(v);
+      else p[k] = v;
+    }
+  }
+  return p;
+}
+
+/** 直播脚本 JSON 导入：把控制台导出的直播脚本（或本站下载的 JSON）回填表单；缺的字段恢复默认 */
+function importLiveScriptJson(text) {
+  let j;
+  try { j = JSON.parse(text); } catch { return toast('JSON 解析失败，请确认文件是控制台导出的脚本'); }
+  const p = liveScriptJsonToParams(j);
+  if (!p) return toast('这个 JSON 不是直播脚本');
   state.exp.params = { ...p };
   state.exp.result = null; state.exp.error = null;
   render();
@@ -944,6 +1217,282 @@ const actions = {
     state.backStack = popNav(state.backStack || [])[1]; // 弹出已返回的那一页，避免原地打转
     go(back.target, { push: false });
   },
+  // ---- 直播内测 ----
+  'livetest-create': async () => {
+    const t = state.livetest;
+    if (t.busy || !t.scriptJson) return;
+    t.busy = 'create'; t.error = null; render();
+    try {
+      const d = await api.liveTest.create({ name: t.name, scriptJson: t.scriptJson });
+      t.session = d; t.started = false; t.startedAt = 0;
+      toast(d.mode === 'mock' ? '演示会话已创建（样例，未创建真实直播间）' : '直播间已创建，开始计时');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'livetest-start': async () => {
+    const t = state.livetest;
+    if (t.busy || !t.session?.sessionId || t.started) return;
+    t.busy = 'start'; t.error = null; render();
+    try {
+      const d = await api.liveTest.start(t.session.sessionId);
+      t.started = true; t.startedAt = d.startedAt || Date.now();
+      startLiveHeartbeat('live'); startTicker();
+      toast('已开播');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'livetest-queue-add': () => {
+    const t = state.livetest;
+    if ((t.queue || []).length >= 10) { toast('队列最多 10 条。'); return; }
+    if (t.takeoverKind === 'audio') {
+      if (!String(t.takeoverAudioUrl || '').trim()) return;
+      t.queue.push({ kind: 'audio', audioUrl: String(t.takeoverAudioUrl).trim(), stream: t.takeoverStream, status: '待发送' });
+    } else {
+      const content = String(t.takeoverText || '').trim();
+      if (!content) return;
+      t.queue.push({ kind: 'text', content, stream: t.takeoverStream, status: '待发送' });
+      t.takeoverText = '';
+    }
+    render();
+  },
+  'livetest-queue-send': async (el) => {
+    const t = state.livetest;
+    const q = (t.queue || [])[Number(el.dataset.index)];
+    if (!q || q.status !== '待发送' || !t.session?.sessionId) return;
+    if (q.kind === 'audio') { toast('音频接管的接管参数口径文档未给出，暂不支持发送。'); return; }
+    q.status = '发送中'; render();
+    try {
+      await api.liveTest.command({ sessionId: t.session.sessionId, content: q.content });
+      q.status = '已发送';
+    } catch (e) { q.status = `失败：${toApiError(e).message}`; }
+    render();
+  },
+  'livetest-queue-del': (el) => {
+    const t = state.livetest;
+    t.queue.splice(Number(el.dataset.index), 1);
+    render();
+  },
+  'livetest-queue-clear': () => { state.livetest.queue = []; render(); },
+  'livetest-replace': async () => {
+    const t = state.livetest;
+    if (!t.session?.sessionId) return;
+    t.busy = 'replace'; t.error = null; render();
+    try {
+      await api.liveTest.replace({ sessionId: t.session.sessionId, fgFileId: t.replaceFgFileId, bgFileId: t.replaceBgFileId });
+      toast('替换已提交，平台接收后自动触发');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'livetest-mic-toggle': () => { if (state.livetest.micActive) stopMic('user'); else startMic(); },
+  'livetest-mic-remaining': () => {
+    const s = micSession;
+    if (!s || s.ws.readyState !== WebSocket.OPEN) { toast('麦克风未连接。'); return; }
+    s.ws.send(JSON.stringify({ code: 101, message: 'check_remaining', commandTraceId: s.traceId }));
+  },
+  'livetest-close': async () => {
+    const t = state.livetest;
+    if (t.busy || !t.session?.sessionId) return;
+    if (!window.confirm('确认关闭直播间？关播后观众端会断开。')) return;
+    t.busy = 'close'; t.error = null; render();
+    try {
+      await api.liveTest.close(t.session.sessionId);
+      stopLiveTimers();
+      t.started = false; t.session = null; t.startedAt = 0;
+      toast('直播间已关闭');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'livetest-retry': () => { state.livetest.error = null; render(); },
+  // ---- 视频互动直播测试 ----
+  'multitest-create': async () => {
+    const t = state.multitest;
+    if (t.busy || !String(t.materialIds || '').trim()) return;
+    t.busy = 'create'; t.error = null; render();
+    try {
+      const d = await api.multiTest.create({ name: t.name, scriptJson: t.scriptJson || undefined, materialIds: t.materialIds, rtmpUrl: t.rtmpUrl || undefined, callbackUrl: t.callbackUrl || undefined });
+      t.session = d; t.started = false; t.startedAt = 0;
+      toast(d.mode === 'mock' ? '演示会话已创建（样例）' : '互动直播已创建，开始计时');
+      await refreshMultiPlayback();
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'multitest-start': async () => {
+    const t = state.multitest;
+    if (t.busy || !t.session?.sessionId || t.started) return;
+    t.busy = 'start'; t.error = null; render();
+    try {
+      const d = await api.multiTest.start(t.session.sessionId);
+      t.started = true; t.startedAt = d.startedAt || Date.now();
+      startLiveHeartbeat('multi'); startTicker();
+      toast('已开播');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'multitest-queue-add': async () => {
+    const t = state.multitest;
+    if (t.busy || !t.session?.sessionId) return;
+    const type = Number(t.queueType) || 0;
+    const body = { sessionId: t.session.sessionId, type, priority: Number(t.queuePriority) || 0 };
+    if (type === 0) { if (!String(t.queueText || '').trim()) return; body.content = String(t.queueText).trim(); }
+    else if (type === 1) { if (!String(t.queueAudioUrl || '').trim()) return; body.audioUrl = String(t.queueAudioUrl).trim(); }
+    else { if (!String(t.queueScript || '').trim()) return; body.scriptJson = String(t.queueScript).trim(); }
+    if (String(t.queueMaterialId || '').trim()) body.materialId = String(t.queueMaterialId).trim();
+    t.busy = 'queue'; t.error = null; render();
+    try {
+      const d = await api.multiTest.queueAdd(body);
+      t.queue.push({ type: String(type), content: type === 0 ? body.content : type === 1 ? body.audioUrl : '接管脚本', status: d.mode === 'mock' ? '已入队（演示）' : '已入队', commandTraceId: d.commandTraceId || '', local: true });
+      if (type === 0) t.queueText = '';
+      toast('已加入接管队列');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'multitest-queue-del': (el) => {
+    const t = state.multitest;
+    t.queue.splice(Number(el.dataset.index), 1);
+    render();
+  },
+  'multitest-queue-refresh': () => refreshMultiQueue(),
+  'multitest-playback-refresh': () => refreshMultiPlayback(),
+  'multitest-playback-save': async () => {
+    const t = state.multitest;
+    if (t.busy || !t.session?.sessionId || !(t.materials || []).length) return;
+    t.busy = 'playback'; t.error = null; render();
+    try {
+      await api.multiTest.playMaterials(t.session.sessionId, t.materials.map((mm) => mm.materialId));
+      toast('播放顺序已提交');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'multitest-mat-up': (el) => {
+    const t = state.multitest; const i = Number(el.dataset.index);
+    if (i <= 0) return;
+    [t.materials[i - 1], t.materials[i]] = [t.materials[i], t.materials[i - 1]];
+    render();
+  },
+  'multitest-mat-down': (el) => {
+    const t = state.multitest; const i = Number(el.dataset.index);
+    if (i < 0 || i >= (t.materials || []).length - 1) return;
+    [t.materials[i + 1], t.materials[i]] = [t.materials[i], t.materials[i + 1]];
+    render();
+  },
+  'multitest-mat-switch': async (el) => {
+    const t = state.multitest;
+    if (t.busy || !t.session?.sessionId) return;
+    if (t.conflict === 'reject' && (t.queue || []).length) { toast('接管队列非空，按「接管中拒绝切换」不发切换请求。'); return; }
+    t.busy = 'switch'; t.error = null; render();
+    try {
+      await api.multiTest.playSwitch(t.session.sessionId, el.dataset.id);
+      toast('已切换当前素材');
+      await refreshMultiPlayback();
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'multitest-close': async () => {
+    const t = state.multitest;
+    if (t.busy || !t.session?.sessionId) return;
+    if (!window.confirm('确认结束直播？关播后观众端会断开。')) return;
+    t.busy = 'close'; t.error = null; render();
+    try {
+      await api.multiTest.close(t.session.sessionId);
+      stopLiveTimers();
+      t.started = false; t.session = null; t.startedAt = 0;
+      toast('直播已结束');
+    } catch (e) { t.error = toApiError(e); }
+    t.busy = ''; render();
+  },
+  'multitest-retry': () => { state.multitest.error = null; render(); },
+  // ---- 账单 ----
+  'bill-query': () => loadBill(),
+  'bill-csv': async () => {
+    const b = state.bill;
+    try {
+      const blob = await api.bill.csv({ tab: b.tab, from: b.from, to: b.to, statRange: b.statRange, algoSubType1: b.algoSubType1, algoSubType2: b.algoSubType2 });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `bill-${b.tab}-${b.from}_to_${b.to}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast('账单 CSV 已下载');
+    } catch (e) { toast(toApiError(e).message); }
+  },
+  'bill-mailto': () => {
+    const b = state.bill;
+    const label = (api.bill.tabs().find((x) => x.id === b.tab) || {}).label || b.tab;
+    const subject = `如影平台账单（${label} ${b.from} 至 ${b.to}）`;
+    const lines = [
+      `页签：${label}`, `日期范围：${b.from} 至 ${b.to}`,
+      `记录数：${(b.rows || []).length} 条`, `合计用量：${b.usedSum ?? '—'}`,
+      ...(b.note ? [`说明：${b.note}`] : []),
+      '', '（本邮件由你在本站点「发送邮箱」打开邮箱客户端后自行发送；本站不代发邮件，CSV 请用「本地导出 CSV」下载后作为附件。）',
+    ];
+    location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
+    toast('已打开你的邮箱客户端，请在其中发送');
+  },
+  // ---- 互动直播管理 ----
+  'livescripts-reload': () => loadLiveScripts(),
+  'livescript-open': async (el) => {
+    try {
+      const d = await api.liveScripts.get(el.dataset.id);
+      const params = liveScriptJsonToParams(JSON.parse(d.script.scriptJson));
+      if (!params) { toast('这个脚本不是直播脚本，无法打开。'); return; }
+      state.exp.abort?.abort();
+      state.exp = { capId: 'live-script', params, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null };
+      state.expPrefill = null;
+      state.expScriptLoaded = el.dataset.id;
+      go('experience/live-script');
+      toast('已载入脚本，可在编辑器里继续改');
+    } catch (e) { toast(toApiError(e).message); }
+  },
+  'livescript-export': async (el) => {
+    try {
+      const d = await api.liveScripts.get(el.dataset.id);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([d.script.scriptJson], { type: 'application/json' }));
+      a.download = `liveScript_${d.script.name.replace(/[^\w\u4e00-\u9fff-]+/g, '_')}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (e) { toast(toApiError(e).message); }
+  },
+  'livescript-share': (el) => {
+    const url = `${location.href.split('#')[0]}#experience/live-script?script=${encodeURIComponent(el.dataset.id)}`;
+    if (!navigator.clipboard?.writeText) { toast('当前浏览器不支持自动复制，请手动复制地址栏链接'); return; }
+    navigator.clipboard.writeText(url).then(() => toast('分享链接已复制：打开即进编辑器并载入该脚本'), () => toast('复制失败'));
+  },
+  'livescript-rename': async (el) => {
+    const sc = (state.livescripts.scripts || []).find((x) => x.id === el.dataset.id);
+    if (!sc) return;
+    const name = window.prompt('给脚本改个名字', sc.name);
+    if (name === null || !name.trim()) return;
+    try { await api.liveScripts.rename(sc.id, name.trim()); await loadLiveScripts(); toast('已改名'); }
+    catch (e) { toast(toApiError(e).message); }
+  },
+  'livescript-del': async (el) => {
+    const sc = (state.livescripts.scripts || []).find((x) => x.id === el.dataset.id);
+    if (!sc) return;
+    if (!window.confirm(`确认删除脚本《${sc.name}》？只删本站脚本库里的记录，不影响平台。`)) return;
+    try { await api.liveScripts.remove(sc.id); await loadLiveScripts(); toast('已删除'); }
+    catch (e) { toast(toApiError(e).message); }
+  },
+  // ---- 直播脚本编辑器：保存到脚本库 ----
+  'exp-save-script': async (btn) => {
+    if (state.exp.capId !== 'live-script') return;
+    const r = state.exp.result;
+    const jsonText = r?.jsonText || (r?.json ? JSON.stringify(r.json, null, 2) : '');
+    if (!jsonText) { toast('没有可保存的脚本 JSON。'); return; }
+    const name = String(state.exp.params.name || '未命名脚本').slice(0, 64);
+    try {
+      await api.liveScripts.create({ name, scriptJson: jsonText, source: 'editor' });
+      toast(`已保存到脚本库《${name}》`);
+      if (btn) { btn.textContent = '已保存到脚本库'; btn.disabled = true; }
+    } catch (e) { toast(toApiError(e).message); }
+  },
+  // ---- 通用：复制文本（如拉流地址） ----
+  'copy-text': (el) => {
+    const text = el.dataset.text || '';
+    if (!text) return;
+    if (!navigator.clipboard?.writeText) { toast('当前浏览器不支持自动复制'); return; }
+    navigator.clipboard.writeText(text).then(() => toast('已复制'), () => toast('复制失败'));
+  },
   'exp-upload': (el) => {
     if (!state.me?.user) { toast('请先登录再上传文件。登录后上传的素材会得到一个本站地址，直接填进表单就能用。'); return; }
     document.querySelector(`[data-upload-field="${el.dataset.field}"]`)?.click();
@@ -963,12 +1512,18 @@ const actions = {
 };
 
 document.addEventListener('click', (ev) => {
-  const t = ev.target.closest('[data-action],[data-group],[data-filter],[data-use],[data-experience],[data-create],[data-mode],[data-del],[data-rename],[data-work-view],[data-kb-del],[data-skip],[data-module],[data-module-group],[data-module-all],[data-quick-days],[data-quick-extend],[data-user-act],[data-vendor-act],[data-key-revoke],[data-class-act],[data-teach-view],[data-teach-save]');
+  const t = ev.target.closest('[data-action],[data-group],[data-filter],[data-use],[data-experience],[data-create],[data-mode],[data-del],[data-rename],[data-work-view],[data-kb-del],[data-skip],[data-module],[data-module-group],[data-module-all],[data-quick-days],[data-quick-extend],[data-user-act],[data-vendor-act],[data-key-revoke],[data-class-act],[data-teach-view],[data-teach-save],[data-bill-tab],[data-livescripts-tab]');
   if (!t) return;
   if (admin.click(t)) return;
   const d = t.dataset;
   if (d.skip !== undefined) { ev.preventDefault(); document.getElementById('main')?.focus(); return; }
   if (d.action) { ev.preventDefault(); actions[d.action]?.(t); return; }
+  if (d.billTab) {
+    // 账单页签切换：语音筛选（日/月、来源、服务资源）随页签重置，避免把 TTS 的值带到 ASR 页签
+    state.bill.tab = d.billTab; state.bill.statRange = '1'; state.bill.algoSubType1 = ''; state.bill.algoSubType2 = ''; state.bill.loaded = false;
+    loadBill(); return;
+  }
+  if (d.livescriptsTab) { state.livescripts.tab = d.livescriptsTab; render(); return; }
   if (d.group) { state.capFilter = d.group; return go('capabilities'); }
   if (d.filter) { state.capFilter = d.filter; return render(); }
   if (d.use) { return go(`experience/${d.use}`); }
@@ -1077,7 +1632,11 @@ document.addEventListener('change', (ev) => {
   }
   if (admin.change(el)) return;
   if (ev.target.dataset?.uploadField) { uploadMediaField(ev.target); ev.target.value = ''; return; }
-  if (ev.target.dataset?.importJson !== undefined) { const f = ev.target.files?.[0]; if (f) f.text().then(importVideoScriptJson).catch(() => toast('读取文件失败')); ev.target.value = ''; return; }
+  if (ev.target.dataset?.importJson !== undefined) { const f = ev.target.files?.[0]; if (f) f.text().then(state.exp.capId === 'live-script' ? importLiveScriptJson : importVideoScriptJson).catch(() => toast('读取文件失败')); ev.target.value = ''; return; }
+  // 直播脚本文件（内测 / 互动直播 / 脚本库上传）
+  if (ev.target.dataset?.livetestFile !== undefined) { const f = ev.target.files?.[0]; if (f) readLiveScriptFile(f, 'live'); ev.target.value = ''; return; }
+  if (ev.target.dataset?.multitestFile !== undefined) { const f = ev.target.files?.[0]; if (f) readLiveScriptFile(f, 'multi'); ev.target.value = ''; return; }
+  if (ev.target.dataset?.livescriptsFile !== undefined) { const f = ev.target.files?.[0]; if (f) uploadLiveScriptFile(f); ev.target.value = ''; return; }
   if (ev.target.id === 'kb-file') { uploadFiles(ev.target.files); ev.target.value = ''; }
 });
 

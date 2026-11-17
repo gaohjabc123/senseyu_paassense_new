@@ -57,6 +57,10 @@ export function getConfig(env = process.env, file = loadDotEnv()) {
     avatarModelUrl: pick('RUYING_AVATAR_MODEL_URL'), // 已训练形象的 zip 包地址（视频合成 digital_role.url 用）
     liveFaceFeatureId: pick('RUYING_LIVE_FACE_FEATURE_ID'), // 直播用形象 face_feature_id
     liveFileId: pick('RUYING_LIVE_FILE_ID'), // 直播预热素材 fileId
+    liveModelUrl: pick('RUYING_LIVE_MODEL_URL'), // 超级直播间 Pro 用形象 zip 包地址
+    // 账单 algoGroup：2026-11-17 第一轮探测（algoGroup 1/2/0 查视频合成均为 count 0，与控制台
+    // 0.62min/7 条对不上）表明取值尚不确定；服务端可配置常量，默认 1，等探测定死后再改
+    billAlgoGroup: Number(pick('RUYING_BILL_ALGO_GROUP', '1')) || 1,
     allowBillable: pick('ALLOW_BILLABLE', 'false').toLowerCase() === 'true',
     deepseekKey: pick('DEEPSEEK_API_KEY'),
     deepseekBaseUrl: pick('DEEPSEEK_BASE_URL', 'https://api.deepseek.com').replace(/\/+$/, ''),

@@ -322,6 +322,90 @@ export function buildVideoCreateParam(p = {}, { qid = '', voice = null, avatarId
 }
 
 /**
+ * 直播脚本 param（控制台「直播脚本编辑」导出 JSON，liveScript_2026-11-17_15_18_12.json，
+ * 芸馨_直播_站姿 + 发音人「中文（中国）-女-直播-芸馨」为准）：
+ *   · 顶层 version "0.0.1"、recycle 0、stream_mode true、sceneList（1 个场景）；
+ *     无 video_format/resolution/frame_rate/watermark/subtitle/title；
+ *   · digital_role 只有 id/face_feature_id/name/url/scale（无 position/rotation/volume/z_position，
+ *     scale 固定 1）；tts_config 有 name/qid/language ""/pitch_offset/speed_ratio/volume
+ *     （language 是空串、不是 zh-CN；无 id/use_action）；tts_query 无 use_action；audios 固定 []；
+ *   · 装饰只在填了图时出现：foregrounds rect 默认 [0,0,300,300]、无 rotation/z_position/cycle；
+ *     backgrounds rect 固定 [0,0,1080,1920]、cycle 固定 true；name 取链接的文件名；
+ *   · effects 只在任一美颜值偏离默认值时出现（38 项 beautify 全量 + whiten_mode/smooth_mode，
+ *     顺序与视频导出一致：whiten_mode 紧跟 whitenStrength、smooth_mode 紧跟 smoothStrength）；
+ *   · 无 title/foreground-texts/background-musics（直播编辑器无标题、前景文字、背景音乐）。
+ * 发音人 qid 留空时省略（真实模式创建直播间时用服务端默认音色兜底）；形象 face_feature_id 与模型 zip 地址必填；脚本文案必填。
+ */
+export function buildLiveScriptParam(p = {}, { qid = '', voice = null, avatarId = null, avatarName = '' } = {}) {
+  const script = nonEmpty(p.script, '直播脚本文案');
+  const faceFeatureId = nonEmpty(p.faceFeatureId, '形象 face_feature_id');
+  const modelUrl = nonEmpty(p.modelUrl, '形象模型地址');
+  if (!isHttpUrl(modelUrl)) throw fail('INVALID_INPUT', '形象模型地址需为 http(s) 地址。');
+  const scriptQid = String(qid || '').trim();
+  // 发音人留空时 qid 省略（与视频脚本一致；真实模式创建直播间时用服务端默认音色兜底）
+  const scene = {
+    digital_role: {
+      ...(avatarId ? { id: avatarId } : {}),
+      face_feature_id: faceFeatureId,
+      ...(String(avatarName || '').trim() ? { name: String(avatarName).trim() } : {}),
+      url: modelUrl,
+      scale: 1,
+    },
+    tts_config: {
+      ...(voice?.name ? { name: voice.name } : {}),
+      ...(scriptQid ? { qid: scriptQid } : {}),
+      language: '',
+      pitch_offset: clampNum(p.pitch, 0, -60, 60),
+      speed_ratio: clampNum(p.speed, 1, 0.5, 2),
+      volume: clampNum(p.volume, 100, 1, 400),
+    },
+    tts_query: { content: script, ssml: false },
+    audios: [],
+  };
+  const urlName = (u) => { try { const s = decodeURIComponent(String(u).split('?')[0].split('/').pop() || ''); return s || 'image.png'; } catch { return 'image.png'; } };
+  const fgUrl = String(p.foregroundUrl || '').trim();
+  if (fgUrl) {
+    if (!isHttpUrl(fgUrl)) throw fail('INVALID_INPUT', '前景图地址需为 http(s) 地址。');
+    scene.foregrounds = [{
+      type: 0, name: urlName(fgUrl), url: fgUrl,
+      rect: [clampNum(p.fgX, 0, -10000, 10000), clampNum(p.fgY, 0, -10000, 10000),
+        clampNum(p.fgW, 300, 1, 10000), clampNum(p.fgH, 300, 1, 10000)],
+      start: clampInt(p.fgStart, 0, 0, 3600000),
+      duration: clampInt(p.fgDuration, -1, -1, 3600000),
+    }];
+  }
+  const bgUrl = String(p.bgUrl || '').trim();
+  if (bgUrl) {
+    if (!isHttpUrl(bgUrl)) throw fail('INVALID_INPUT', '背景图地址需为 http(s) 地址。');
+    scene.backgrounds = [{
+      type: 0, name: urlName(bgUrl), url: bgUrl, rect: [0, 0, 1080, 1920], cycle: true,
+      start: clampInt(p.bgStart, 0, 0, 3600000),
+      duration: clampInt(p.bgDuration, -1, -1, 3600000),
+    }];
+  }
+  const beautify = {};
+  let beautyTouched = false;
+  for (const [key, dflt] of BEAUTY_DEFAULTS) {
+    const v = clampNum(p[key], dflt, key === 'chinLength' ? -1 : 0, 1);
+    beautify[key] = v;
+    if (v !== dflt) beautyTouched = true;
+  }
+  const whitenMode = clampInt(p.whitenMode, 0, 0, 1);
+  const smoothMode = clampInt(p.smoothMode, 0, 0, 1);
+  if (whitenMode !== 0 || smoothMode !== 0) beautyTouched = true;
+  if (beautyTouched) {
+    const ordered = {};
+    for (const [key] of BEAUTY_DEFAULTS) {
+      ordered[key] = beautify[key];
+      if (key === 'whitenStrength') ordered.whiten_mode = whitenMode;
+      if (key === 'smoothStrength') ordered.smooth_mode = smoothMode;
+    }
+    scene.effects = { version: '1.0', beautify: ordered };
+  }
+  return { name: nonEmpty(p.name, '脚本名称').slice(0, 64), param: JSON.stringify({ version: '0.0.1', recycle: 0, stream_mode: true, sceneList: [scene] }) };
+}
+
+/**
  * 直播间创建 param（POST /api/2dvh/v2/material/live/channel/create）。
  * 直播场景 digital_role 必传预热素材 fileId；未配置时直接报前置条件，不让平台报含糊的错。
  */
@@ -334,7 +418,8 @@ export function buildLiveChannelParam(p = {}, { qid = '', faceFeatureId = '', fi
   const param = {
     version: '0.0.1',
     sceneList: [{
-      digital_role: { face_feature_id: faceFeatureId, fileId, position: { x: 0, y: 0, scale: 1.0 } },
+      // scale 与 position 同级（视频导出与超级直播间 Pro 文档样例均如此；旧版把 scale 塞进 position 是错的）
+      digital_role: { face_feature_id: faceFeatureId, fileId, position: { x: 0, y: 0 }, scale: 1 },
       tts_config: { language: 'zh-CN', pitch_offset: 0, speed_ratio: 1, volume: 100, ...(qid ? { qid } : {}) },
       tts_query: { content: nonEmpty(p.script, '直播脚本文案'), ssml: false },
     }],
@@ -345,7 +430,259 @@ export function buildLiveChannelParam(p = {}, { qid = '', faceFeatureId = '', fi
   return body;
 }
 
+/**
+ * 超级直播间 Pro 创建 param（POST /api/2dvh/v2/material/live/channel/create，与普通直播共用接口）。
+ * 口径以 2026-11-17 飞书文档核查为准（文档 V1.5.2，2026-10-27，超级直播间 Pro“新建直播间”样例）：
+ * digital_role 用模型 zip 地址 url（不是预热素材 fileId），含 id/name/position/scale；
+ * avatarType 不是创建参数——avatarType=5 只出现在训练任务的 persistent.avatarType 里（复刻训练参数），
+ * 旧版 live-pro 表单的 avatarType 字段是臆测，已删除。
+ */
+export function buildSuperProChannelParam(p = {}, { qid = '', avatarId = '', avatarName = '', faceFeatureId = '', modelUrl = '' } = {}) {
+  if (!faceFeatureId || !modelUrl) {
+    throw fail('PREREQUISITE',
+      '超级直播间需要已训练的数字人形象（face_feature_id 与模型 zip 地址），当前未配置。',
+      '先用「形象复刻」训练形象，拿到 face_feature_id 与 zip 包地址后由管理员配到服务端；演示环境不受影响。', 'config');
+  }
+  if (!isHttpUrl(modelUrl)) throw fail('INVALID_INPUT', '数字人模型 zip 地址需为 http(s) 地址。');
+  const param = {
+    version: '0.0.1', recycle: 0, stream_mode: true,
+    sceneList: [{
+      digital_role: {
+        ...(avatarId ? { id: Number(avatarId) } : {}),
+        face_feature_id: faceFeatureId,
+        ...(avatarName ? { name: avatarName } : {}),
+        url: modelUrl, position: { x: 0, y: 0 }, scale: 1,
+      },
+      tts_config: { language: 'zh-CN', pitch_offset: 0, speed_ratio: 1, volume: 100, ...(qid ? { qid } : {}) },
+      tts_query: { content: nonEmpty(p.script, '开播脚本文案'), ssml: false },
+      audios: [],
+    }],
+  };
+  const body = { name: nonEmpty(p.name, '直播间名称').slice(0, 64), param: JSON.stringify(param) };
+  // 控制台超级直播间 RTMP 托管页的 Stream Name（可选，0/50 字符）；带上时平台会用
+  if (String(p.streamName || '').trim()) body.streamName = String(p.streamName).trim().slice(0, 50);
+  return body;
+}
+
+/**
+ * 超级直播间接管控制 param（POST /api/2dvh/v1/material/live/super/pro/channel/control）。
+ * 口径以 2026-11-17 飞书文档核查为准：请求体 {sessionId, param}，param 为 JSON 串；
+ * 切换数字人传 digital_role=数字人标识，切换背景传 backgrounds={file_id, digital_role_file_id, rect, start, duration, volume}，
+ * 切换前景传 foregrounds=[{file_id, digital_role_file_id, rect, start, duration, delay, volume}]；
+ * 响应只表示接收成功/失败，满足触发条件后自动触发。
+ * 控制台一页有两组相同表单（两个接管位）；本站按一组提交，两组可分两次提交。
+ * 控制台的 z_pos / start_trace_id / fade_frames / change_bit_rate / 允许延展（delay）不在文档样例里，
+ * 填了才随 param 一并发送，未填不发送。
+ */
+export function buildSuperProControlParam(p = {}) {
+  const sessionId = String(p.sessionId || '').trim();
+  if (!sessionId) throw fail('INVALID_INPUT', '接管控制需要先创建直播间，拿到 sessionId。');
+  const num = (v, dflt) => { const n = Number(v); return Number.isFinite(n) ? n : dflt; };
+  const param = {};
+  if (String(p.roleId || '').trim()) param.digital_role = String(p.roleId).trim();
+  if (String(p.bgFileId || '').trim()) {
+    param.backgrounds = {
+      file_id: String(p.bgFileId).trim(),
+      ...(String(p.bgRoleFileId || '').trim() ? { digital_role_file_id: String(p.bgRoleFileId).trim() } : {}),
+      rect: [num(p.bgX, 0), num(p.bgY, 0), num(p.bgW, 1080), num(p.bgH, 1920)],
+      start: num(p.bgStart, 0), duration: num(p.bgDuration, -1), volume: num(p.bgVolume, 100),
+      ...(String(p.bgTraceId || '').trim() ? { start_trace_id: String(p.bgTraceId).trim() } : {}),
+      ...(String(p.bgBitRate || '').trim() ? { change_bit_rate: num(p.bgBitRate, 5) } : {}),
+    };
+  }
+  if (String(p.fgFileId || '').trim()) {
+    param.foregrounds = [{
+      file_id: String(p.fgFileId).trim(),
+      ...(String(p.fgRoleFileId || '').trim() ? { digital_role_file_id: String(p.fgRoleFileId).trim() } : {}),
+      rect: [num(p.fgX, 0), num(p.fgY, 0), num(p.fgW, 310), num(p.fgH, 88)],
+      start: num(p.fgStart, 0), duration: num(p.fgDuration, 100), delay: String(p.fgExtend || '') === '是',
+      volume: num(p.fgVolume, 100),
+      ...(String(p.fgZPos || '').trim() ? { z_pos: num(p.fgZPos, 0) } : {}),
+      ...(String(p.fgTraceId || '').trim() ? { start_trace_id: String(p.fgTraceId).trim() } : {}),
+      ...(String(p.fgFadeFrames || '').trim() ? { fade_frames: num(p.fgFadeFrames, 0) } : {}),
+    }];
+  }
+  if (!Object.keys(param).length) throw fail('INVALID_INPUT', '请至少填一项要切换的内容（数字人、背景或前景）。');
+  return { sessionId, param: JSON.stringify(param) };
+}
+
 /** 视频互动直播装修任务（POST /api/2dvh/v1/multi-video-live/decoration-tasks） */
+/**
+ * 直播接管 param（POST /api/2dvh/v2/material/live/channel/command）。
+ * 口径见 API_NOTES §直播：体 sessionId + param JSON 串，串内 tts_query.content 为播报文案。
+ */
+export function buildLiveCommandParam(p = {}) {
+  const sessionId = String(p.sessionId || '').trim();
+  if (!sessionId) throw fail('INVALID_INPUT', '接管需要先创建直播间，拿到 sessionId。');
+  const content = nonEmpty(p.content, '接管文案');
+  return { sessionId, param: JSON.stringify({ tts_query: { content, ssml: false } }) };
+}
+
+/**
+ * 视频互动直播创建请求体（POST /api/2dvh/v1/multi-video-live/channel/create）。
+ * 口径以 2026-11-17 飞书文档核查为准：创建需播放列表素材（playMaterials，装修任务产出的
+ * materialId）与推流 RTMP 地址（rtmpUrl）；callbackUrl 可选，平台创建成功后按任务回调。
+ * 上传的脚本 JSON（控制台第一步上传的 JSON）按装修任务同款口径放进 param（JSON 串）。
+ * 注意：param 键名是按装修任务的同款模式推断的，文档原文只给了端点与必填字段，
+ * 真实创建前建议对照文档再核一次。
+ */
+export function buildMultiChannelCreateBody(p = {}) {
+  const materialIds = String(p.materialIds || p.playMaterials || '').split(/[\r\n,，]+/).map((s) => s.trim()).filter(Boolean);
+  if (!materialIds.length) throw fail('INVALID_INPUT', '请至少填一个播放列表素材 ID（装修任务产出的 materialId）。');
+  const body = {
+    name: nonEmpty(p.name, '直播间名称').slice(0, 64),
+    playMaterials: materialIds,
+  };
+  const scriptJson = p.scriptJson ?? p.script;
+  if (scriptJson !== undefined && String(scriptJson).trim()) {
+    body.param = typeof scriptJson === 'string' ? String(scriptJson).trim() : JSON.stringify(scriptJson);
+  }
+  const rtmpUrl = String(p.rtmpUrl || '').trim();
+  if (rtmpUrl) {
+    if (!/^rtmp:\/\//i.test(rtmpUrl)) throw fail('INVALID_INPUT', '推流地址需为 rtmp:// 开头的地址。');
+    body.rtmpUrl = rtmpUrl;
+  }
+  const callbackUrl = String(p.callbackUrl || '').trim();
+  if (callbackUrl) {
+    if (!isHttpUrl(callbackUrl)) throw fail('INVALID_INPUT', '回调地址需为 http(s) 地址。');
+    body.callbackUrl = callbackUrl;
+  }
+  return body;
+}
+
+/**
+ * 视频互动直播接管入队请求体（POST /api/2dvh/v1/live/video-interactive/channel/command/queue）。
+ * 口径以 2026-11-17 飞书文档核查为准（文档 V1.5.2）：体 {sessionId, type, param（JSON 串）,
+ * commandTraceId（幂等，同一 traceId 60 秒内重复视为同一条）, priority（0-100，默认 0）}。
+ * type：0 语音播报（param 内 tts_query.content，与直播接管同款）/ 1 语音输入（param 内 audioUrl，
+ * 一段可公网访问的音频地址）/ 2 接管脚本（param 为接管脚本 JSON 串）。
+ * commandTraceId 由服务端生成（调用方不传时用随机串），不要用同一值重复提交不同内容。
+ */
+export function buildMultiCommandQueueBody(p = {}) {
+  const sessionId = String(p.sessionId || '').trim();
+  if (!sessionId) throw fail('INVALID_INPUT', '接管入队需要先创建直播间，拿到 sessionId。');
+  const type = Number(p.type);
+  if (![0, 1, 2].includes(type)) throw fail('INVALID_INPUT', '接管类型只能是 0 语音播报、1 语音输入、2 接管脚本。');
+  let param;
+  if (type === 0) {
+    param = { tts_query: { content: nonEmpty(p.content, '播报文案'), ssml: false } };
+  } else if (type === 1) {
+    const audioUrl = nonEmpty(p.audioUrl, '语音输入的音频地址');
+    if (!isHttpUrl(audioUrl)) throw fail('INVALID_INPUT', '语音输入的音频地址需为 http(s) 地址。');
+    param = { audioUrl };
+  } else {
+    const script = p.scriptJson ?? p.script;
+    if (script === undefined || !String(script).trim()) throw fail('INVALID_INPUT', '接管脚本不能为空（粘贴脚本 JSON 或上传脚本文件）。');
+    if (typeof script === 'string') {
+      try { param = JSON.parse(script); } catch { throw fail('INVALID_INPUT', '接管脚本不是合法的 JSON，请检查后再提交。'); }
+    } else param = script;
+  }
+  // 控制台接管队列表单含「数字人素材 ID」框；文档 command/queue 体未列出该字段的落点，
+  // 本站随 param 一并发送（未填不发送），平台侧按素材标识处理。
+  if (String(p.materialId || '').trim()) param.materialId = String(p.materialId).trim();
+  return {
+    sessionId,
+    type,
+    param: JSON.stringify(param),
+    commandTraceId: String(p.commandTraceId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`),
+    priority: clampInt(p.priority, 0, 0, 100),
+  };
+}
+
+/**
+ * 账单查询请求体（POST /api/assist/bill/list，非语音任务明细）。
+ * 口径以 2026-11-17 飞书文档核查为准（文档 V1.5.2）：体 {owner（Long，本账号 617）,
+ * algoGroup（Integer）, algoType, billStartTime/billEndTime（"YYYY-MM-DD HH:MM:SS"）,
+ * pageSize/pageNo/sortName/sortValue}，单次最大 1000 条；返回 {pagination, result, usedSum}。
+ * algoGroup 取值尚在探测（第一轮 algoGroup 1/2/0 查视频合成均为 count 0，与控制台显示的
+ * 0.62min/7 条对不上，很可能取值不对）：服务端用可配置常量 BILL_ALGO_GROUP（默认 1，
+ * 环境变量 RUYING_BILL_ALGO_GROUP），不要因为第一轮 count 0 就认定视频账单没数据。
+ */
+export const BILL_ALGO_GROUP_DEFAULT = 1;
+/** 控制台账单页 9 个页签与 algoType 的映射（文档口径；图片数字人/图片编辑没有独立 algoType，见 BILL_TABS 备注） */
+export const BILL_TABS = [
+  { id: 'avatar', label: '人物形象模型生成', kind: 'task', algoType: 12 },
+  { id: 'video', label: '视频合成', kind: 'task', algoType: 14 },
+  { id: 'live', label: '互动直播', kind: 'task', algoType: 17 },
+  { id: 'multi', label: '视频互动直播', kind: 'task', algoType: 44 },
+  { id: 'tts', label: '声音合成', kind: 'voice', algoType: 31 },
+  { id: 'asr', label: 'ASR合成', kind: 'voice', algoType: 30 },
+  { id: 'voice-model', label: '个人音色模型生成', kind: 'task', algoType: 11 },
+  // 图片数字人：账单接口没有独立的 algoType，控制台该页签列的是图片数字人任务；
+  // 本站用视频合成（algoType 14）查询并在页面上如实标注，不按计费单位过滤（单位口径未确认）。
+  { id: 'image-avatar', label: '图片数字人', kind: 'task', algoType: 14, note: '账单接口没有图片数字人的独立 algoType，这里列出的是视频合成账单（含图片数字人任务），请按任务名称区分。' },
+  // 图片编辑：账单接口没有独立的 algoType，且当前总量为 0（未开通）；本站不调接口，直接说明。
+  { id: 'image-edit', label: '图片编辑', kind: 'none', algoType: null, note: '账单接口没有图片编辑的独立 algoType，无法查询；图片编辑当前总量为 0（未开通），账单为空是正常的。' },
+];
+export const BILL_TAB_IDS = BILL_TABS.map((t) => t.id);
+export function billTabOf(id) { return BILL_TABS.find((t) => t.id === id) || BILL_TABS[1]; }
+
+/** 账单日期校验：YYYY-MM-DD，开始不得晚于结束；返回 "YYYY-MM-DD HH:MM:SS" 形式的起止 */
+export function billRange(from, to) {
+  const okDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '').trim());
+  const f = okDate(from) ? String(from).trim() : '';
+  const t = okDate(to) ? String(to).trim() : '';
+  if (!f || !t) throw fail('INVALID_INPUT', '账单日期范围需要起止日期（YYYY-MM-DD）。');
+  if (f > t) throw fail('INVALID_INPUT', '开始日期不能晚于结束日期。');
+  return { billStartTime: `${f} 00:00:00`, billEndTime: `${t} 23:59:59` };
+}
+
+export function buildBillListBody(p = {}) {
+  const { billStartTime, billEndTime } = billRange(p.from, p.to);
+  const algoType = Number(p.algoType);
+  if (!Number.isFinite(algoType)) throw fail('INVALID_INPUT', '账单查询需要 algoType。');
+  return {
+    owner: Number(p.owner),
+    algoGroup: Number(p.algoGroup ?? BILL_ALGO_GROUP_DEFAULT),
+    algoType,
+    billStartTime, billEndTime,
+    pageSize: clampInt(p.pageSize, 50, 1, 1000),
+    pageNo: Math.max(1, Number(p.pageNo) || 1),
+    ...(p.sortName ? { sortName: String(p.sortName) } : {}),
+    ...(p.sortValue ? { sortValue: String(p.sortValue) } : {}),
+  };
+}
+
+/**
+ * 语音账单查询请求体（POST /api/assist/bill/voice/list）。
+ * 口径以 2026-11-17 飞书文档核查为准：体 {owner, algoType（30 ASR/31 TTS）,
+ * billStartTime/billEndTime, algoSubType1（PAAS_HTTP/PAAS_WS/PAAS_VIDEO_2D/PAAS_VIDEO_MIX/PAAS_LIVE）,
+ * algoSubType2（ASR5/TTS3/TTS4/TTS5/TTS7/TTS8）, statRange（1 日账单/2 月账单）}。
+ * 2026-11-17 容器实测已通：2026-11-09~17 查到 2 条 TTS 记录，billingDate 2026-11-12，
+ * billingValue 0.0108，billingUnit 3，algoSubType1 PAAS_HTTP、algoSubType2 TTS3。
+ */
+export function buildBillVoiceListBody(p = {}) {
+  const { billStartTime, billEndTime } = billRange(p.from, p.to);
+  const algoType = Number(p.algoType);
+  if (![30, 31].includes(algoType)) throw fail('INVALID_INPUT', '语音账单的 algoType 只能是 30（ASR）或 31（TTS）。');
+  const statRange = Number(p.statRange) === 2 ? 2 : 1;
+  return {
+    owner: Number(p.owner),
+    algoType,
+    billStartTime, billEndTime,
+    ...(String(p.algoSubType1 || '').trim() ? { algoSubType1: String(p.algoSubType1).trim() } : {}),
+    ...(String(p.algoSubType2 || '').trim() ? { algoSubType2: String(p.algoSubType2).trim() } : {}),
+    statRange,
+  };
+}
+
+/** 账单行规整：只取平台原字段，不猜单位含义；billingUnit 原值保留，展示时按原值标注 */
+export function normalizeBillRow(r = {}) {
+  return {
+    id: r.id ?? r.billId ?? '',
+    algoType: r.algoType ?? null,
+    billingDate: r.billingDate || r.billDate || r.createTime || '',
+    billingValue: r.billingValue ?? r.used ?? r.value ?? '',
+    billingUnit: r.billingUnit ?? r.unit ?? '',
+    algoSubType1: r.algoSubType1 || '',
+    algoSubType2: r.algoSubType2 || '',
+    startTime: r.startTime || r.billStartTime || '',
+    endTime: r.endTime || r.billEndTime || '',
+    status: r.status ?? '',
+    taskName: r.taskName || r.materialName || r.name || '',
+    raw: r,
+  };
+}
 /**
  * 装修任务请求体（POST /api/2dvh/v1/multi-video-live/decoration-tasks）。
  * 按飞书《装修脚本和接管脚本》子文档 2.1 最小可用脚本构造（2.12.0 按文档改对）：

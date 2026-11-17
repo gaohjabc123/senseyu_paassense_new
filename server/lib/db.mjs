@@ -68,6 +68,13 @@ const SCHEMA = [
     charge TEXT NOT NULL DEFAULT '', refunded INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace, created_at)`,
+  // 直播脚本库：本站自己的存储（文档里没有互动直播脚本的创建/查询/列表接口，
+  // 脚本不是平台独立资源：装修脚本随 decoration-tasks 提交，接管脚本随 command/queue 提交）。
+  // 存直播脚本编辑器出的脚本（名称/JSON/创建时间），供查看、改名、删除、导出、导入回填编辑器。
+  `CREATE TABLE IF NOT EXISTS live_scripts (
+    id TEXT PRIMARY KEY, workspace TEXT NOT NULL, name TEXT NOT NULL, script_json TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'editor', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_scripts_workspace ON live_scripts(workspace, created_at)`,
 ];
 
 // 老数据库升级：CREATE TABLE IF NOT EXISTS 不会给已有的表加列，这里按需补列（幂等）

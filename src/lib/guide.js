@@ -3,7 +3,7 @@ export const TOUR_STEPS = [
   { selector: '.create-tabs', title: '五条快捷链路', text: '视频口播、语音合成、知识库问答、文本驱动视频、视频脚本编辑，点标签切换。' },
   { selector: '[data-action="fill-sample"]', title: '不会写文案？', text: '点「填入示例」自动填一段，再改成你的内容。' },
   { selector: '[data-action="run-video"]', title: '点一下生成', text: '先配音、再合成，进度会实时显示。' },
-  { selector: '.sidenav [data-view="capabilities"]', title: '全部 21 项能力', text: '能力矩阵里每一项都可以单独体验。' },
+  { selector: '.sidenav [data-view="capabilities"]', title: '全部 24 项能力', text: '能力矩阵里每一项都可以单独体验。' },
 ];
 const TOUR_KEY = 'ruying_tour_done_v3';
 export function nextTourStep(index) { return index + 1 < TOUR_STEPS.length ? index + 1 : -1; }

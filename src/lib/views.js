@@ -133,7 +133,7 @@ export function homeView(s) {
 
     <section class="section">
       <div class="section__head"><div><h2>一套 API，覆盖数字人内容生产全链路</h2>
-        <p>6 大类 21 项能力：从形象、音色到成片、互动，可单独调用，也可组合集成。</p></div>
+        <p>6 大类 24 项能力：从形象、音色到成片、互动，可单独调用，也可组合集成。</p></div>
         <a class="btn" href="#capabilities" data-view="capabilities">全部能力</a></div>
       <div class="cap-grid">${GROUPS.map((g) => `<button class="cap-card" type="button" data-group="${g.id}" style="--accent:${g.accent}">
           <span class="cap-card__icon" aria-hidden="true">${g.icon}</span>
@@ -572,6 +572,248 @@ export function taskCenterView(s) {
     <p class="hint-block">共 ${tc.total} 条${(tc.list || []).some((t) => t.status === 1 || t.status === 2) ? '；未完成的任务每 15 秒自动刷新一次状态，跑完自动停。' : '。'}</p></div></div>`;
 }
 
+/** 直播内测：按控制台 /company/live/liveTest 的 5 步复刻（创建 / 启动 / 观众互动模拟 / 麦克风接管 / 关闭）。
+ * 按钮禁用均因未创建直播间——按控制台原样；演示环境只出样例会话，不创建真实直播间。 */
+export function liveTestView(s) {
+  const t = s.livetest;
+  const hasSession = !!t.session?.sessionId;
+  const sess = t.session || {};
+  const elapsed = t.startedAt ? fmtElapsed(Date.now() - t.startedAt) : '—';
+  const step = (n, title, pill, body) => `<div class="card"><div class="card__title"><h2>第 ${n} 步 · ${title}</h2>${pill ? `<span class="pill pill--info">${pill}</span>` : ''}</div>${body}</div>`;
+  const dis = (ok) => (ok ? '' : 'disabled');
+  const queueRows = (t.queue || []).map((q, i) => `<tr><td>${i + 1}</td><td>${esc(q.kind === 'audio' ? '音频' : '文字')}${q.stream === 'stream' ? ' · 流式' : ' · 非流式'}</td><td>${esc(q.content || q.audioUrl || '')}</td><td>${esc(q.status || '待发送')}</td>
+    <td><div class="actions actions--inline"><button class="btn btn--sm btn--primary" type="button" data-action="livetest-queue-send" data-index="${i}" ${dis(hasSession && q.status === '待发送')}>发送</button><button class="btn btn--sm" type="button" data-action="livetest-queue-del" data-index="${i}">删除</button></div></td></tr>`).join('');
+  return `<div class="console">
+    <p class="hint-block">直播内测台：按如影控制台「直播内测」页的 5 步复刻。创建直播间即开始计时；开播后每 60 秒自动发送一次心跳，心跳丢失会在阈值后被动关闭；不用时请点第 5 步关播，否则占用路数。</p>
+    ${t.error ? errorBlock(t.error, { retry: 'livetest-retry' }) : ''}
+    <div class="grid-2"><div>
+    ${step(1, '创建直播间', '创建即开始计时', `
+      <div class="form-field"><label for="livetest-name">直播间名称</label><input class="input" id="livetest-name" data-bind="livetest.name" value="${esc(t.name)}" maxlength="64" /></div>
+      <div class="form-field"><label for="livetest-script-file">直播脚本 JSON</label>
+        <input type="file" id="livetest-script-file" accept=".json,application/json" data-livetest-file />
+        <p class="field-hint">上传控制台「导出直播脚本」的文件（liveScript_*.json）；本站只取其中第一场景的播报文案与发音人创建直播间。${t.scriptFileName ? `已选：${esc(t.scriptFileName)}` : '未选文件。'}</p>
+        ${t.scriptText ? `<p class="field-hint">脚本播报内容：${esc(t.scriptText.slice(0, 80))}${t.scriptText.length > 80 ? '…' : ''}</p>` : ''}</div>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="livetest-create" ${dis(t.scriptJson && !t.busy)}>${t.busy === 'create' ? '创建中…' : '点击创建'}</button></div>
+      ${hasSession ? `<table class="table kv-table"><tbody>
+        <tr><th scope="row">会话编号</th><td><code>${esc(sess.sessionId)}</code></td></tr>
+        <tr><th scope="row">状态</th><td>${esc(sess.statusText || '')}</td></tr>
+        <tr><th scope="row">拉流 RTMP</th><td><code>${esc(sess.pullRtmpUrl || '—')}</code></td></tr>
+        <tr><th scope="row">拉流 FLV</th><td><code>${esc(sess.pullFlvUrl || '—')}</code></td></tr>
+        <tr><th scope="row">拉流 HLS</th><td><code>${esc(sess.pullHlsUrl || '—')}</code></td></tr>
+      </tbody></table>` : ''}`)}
+    ${step(2, '启动直播', '每 60 秒心跳', `
+      <p class="muted">开播后开始推流，心跳每 60 秒自动发送一次；心跳丢失会在阈值后被动关闭。</p>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="livetest-start" ${dis(hasSession && !t.started && !t.busy)}>${t.busy === 'start' ? '启动中…' : t.started ? '已开播' : '点击开始'}</button></div>
+      ${t.started ? `<p class="field-hint">已开播 ${t.startedAt ? new Date(t.startedAt).toLocaleString('zh-CN', { hour12: false }) : ''} · 上次心跳 ${t.lastHeartbeatAt ? new Date(t.lastHeartbeatAt).toLocaleTimeString('zh-CN', { hour12: false }) : '—'}${t.heartbeatError ? ` · <span class="warn">心跳失败：${esc(t.heartbeatError)}</span>` : ''}</p>` : `<p class="field-hint">${hasSession ? '尚未开播。' : '请先创建直播间。'}</p>`}`)}
+    ${step(3, '观众互动模拟', '接管走 liveCommand', `
+      <div class="form-field"><span class="field-label">接管方式</span><div class="radio-row" role="radiogroup" aria-label="接管方式">
+        <label><input type="radio" name="livetest-kind" data-bind="livetest.takeoverKind" value="text" ${t.takeoverKind !== 'audio' ? 'checked' : ''} /> 文字</label>
+        <label><input type="radio" name="livetest-kind" data-bind="livetest.takeoverKind" value="audio" ${t.takeoverKind === 'audio' ? 'checked' : ''} /> 音频</label></div></div>
+      <div class="form-field"><span class="field-label">播报方式</span><div class="radio-row" role="radiogroup" aria-label="播报方式">
+        <label><input type="radio" name="livetest-stream" data-bind="livetest.takeoverStream" value="nonstream" ${t.takeoverStream !== 'stream' ? 'checked' : ''} /> 非流式</label>
+        <label><input type="radio" name="livetest-stream" data-bind="livetest.takeoverStream" value="stream" ${t.takeoverStream === 'stream' ? 'checked' : ''} /> 流式</label></div></div>
+      ${t.takeoverKind === 'audio'
+        ? `<div class="form-field"><label for="livetest-audio">接管音频</label><input class="input" id="livetest-audio" data-bind="livetest.takeoverAudioUrl" value="${esc(t.takeoverAudioUrl || '')}" placeholder="https://…/audio.mp3" />
+          <p class="field-hint">音频接管的接管参数口径文档未给出，本站暂不支持音频接管发送；如需用声音接管，可先在「语音合成 TTS」里合成音频。文字接管不受影响。</p></div>`
+        : `<div class="form-field"><label for="livetest-text">接管文本</label><textarea class="editor" id="livetest-text" data-bind="livetest.takeoverText" rows="2" placeholder="输入要让数字人播报的话">${esc(t.takeoverText || '')}</textarea></div>`}
+      <div class="form-field"><span class="field-label">替换前 / 背景（仅非流式有效）</span>
+        <div class="grid-2"><div><label for="livetest-fg">前景文件 ID</label><input class="input" id="livetest-fg" data-bind="livetest.replaceFgFileId" value="${esc(t.replaceFgFileId || '')}" placeholder="前景素材文件 ID" ${dis(t.takeoverStream !== 'stream')} /></div>
+        <div><label for="livetest-bg">背景文件 ID</label><input class="input" id="livetest-bg" data-bind="livetest.replaceBgFileId" value="${esc(t.replaceBgFileId || '')}" placeholder="背景素材文件 ID" ${dis(t.takeoverStream !== 'stream')} /></div></div>
+        <p class="field-hint">替换走超级直播间接管控制接口（切换前景 / 背景）；流式播报时控制台也不允许替换。</p>
+        <div class="actions"><button class="btn" type="button" data-action="livetest-replace" ${dis(hasSession && t.takeoverStream !== 'stream' && (t.replaceFgFileId || t.replaceBgFileId))}>替换前 / 背景</button></div></div>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="livetest-queue-add" ${dis(hasSession && (t.queue || []).length < 10 && (t.takeoverKind === 'audio' ? !!t.takeoverAudioUrl : !!String(t.takeoverText || '').trim()))}>加入队列</button>
+        <button class="btn" type="button" data-action="livetest-queue-clear" ${dis((t.queue || []).length > 0)}>取消全部</button></div>
+      ${(t.queue || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">顺序</th><th scope="col">方式</th><th scope="col">接管内容</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>${queueRows}</tbody></table></div>` : '<p class="field-hint">队列为空，最多 10 条；点「发送」逐条发给数字人播报。</p>'}`)}
+    ${step(4, '麦克风接管', 'WebSocket 16k PCM', `
+      <p class="muted">浏览器采集麦克风 → 重采样 16k 单声道 PCM → 走 WebSocket 发给平台。需要浏览器麦克风权限；只在真实环境可用（演示环境没有真实直播间）。</p>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="livetest-mic-toggle" ${dis(hasSession && t.started && !t.busy)}>${t.micActive ? '关闭麦克风接管' : '开启麦克风接管'}</button>
+      <button class="btn" type="button" data-action="livetest-mic-remaining" ${dis(t.micActive)}>查剩余</button></div>
+      <p class="field-hint">${t.micStatus ? esc(t.micStatus) : (hasSession ? (t.started ? '麦克风未开启。' : '请先开播。') : '请先创建直播间。')}</p>`)}
+    ${step(5, '关闭', '', `
+      <p class="muted">不用时请关播，否则占用直播路数；10 分钟无心跳平台也会自动断播。</p>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="livetest-close" ${dis(hasSession && !t.busy)}>${t.busy === 'close' ? '关闭中…' : '点击退出'}</button></div>
+      <p class="field-hint">旧版直播接口 demo 见如影控制台「直播内测」页：<a href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台</a>。</p>`)}
+    </div>
+    <div><div class="card"><div class="card__title"><h2>直播输出预览</h2>${t.started ? '<span class="pill pill--ok">直播中</span>' : hasSession ? '<span class="pill pill--info">已创建 · 未开播</span>' : '<span class="pill pill--mock">未创建</span>'}</div>
+      ${hasSession ? `<table class="table kv-table"><tbody>
+        <tr><th scope="row">会话编号</th><td><code>${esc(sess.sessionId)}</code></td></tr>
+        <tr><th scope="row">开播时长</th><td><span data-live-elapsed="livetest">${elapsed}</span></td></tr>
+        <tr><th scope="row">拉流 RTMP</th><td><code>${esc(sess.pullRtmpUrl || '—')}</code> ${sess.pullRtmpUrl ? `<button class="btn btn--sm" type="button" data-action="copy-text" data-text="${esc(sess.pullRtmpUrl)}">复制</button>` : ''}</td></tr>
+        <tr><th scope="row">拉流 FLV</th><td><code>${esc(sess.pullFlvUrl || '—')}</code> ${sess.pullFlvUrl ? `<button class="btn btn--sm" type="button" data-action="copy-text" data-text="${esc(sess.pullFlvUrl)}">复制</button>` : ''}</td></tr>
+        <tr><th scope="row">拉流 HLS</th><td><code>${esc(sess.pullHlsUrl || '—')}</code> ${sess.pullHlsUrl ? `<button class="btn btn--sm" type="button" data-action="copy-text" data-text="${esc(sess.pullHlsUrl)}">复制</button>` : ''}</td></tr>
+        ${sess.liveAddress ? `<tr><th scope="row">liveAddress</th><td><code>${esc(sess.liveAddress)}</code></td></tr>` : ''}
+      </tbody></table>
+      <p class="field-hint">本站不内置播放器：拉流地址可复制到播放器里看；没有播放器就只显示拉流地址与状态，不编造播放画面。</p>`
+      : '<p class="muted">还没有直播间：按第 1 步上传直播脚本 JSON 并点击创建。</p>'}
+    </div></div></div></div>`;
+}
+
+/** 视频互动直播测试：按控制台 /company/live/multiVideoInteractiveTest 的 5 步复刻 */
+export function multiTestView(s) {
+  const t = s.multitest;
+  const hasSession = !!t.session?.sessionId;
+  const sess = t.session || {};
+  const elapsed = t.startedAt ? fmtElapsed(Date.now() - t.startedAt) : '—';
+  const step = (n, title, pill, body) => `<div class="card"><div class="card__title"><h2>第 ${n} 步 · ${title}</h2>${pill ? `<span class="pill pill--info">${pill}</span>` : ''}</div>${body}</div>`;
+  const dis = (ok) => (ok ? '' : 'disabled');
+  const queueRows = (t.queue || []).map((q, i) => `<tr><td>${i + 1}</td><td>${esc(['语音播报', '语音输入', '接管脚本'][Number(q.type)] || q.type)}</td><td>${esc(q.content || q.audioUrl || q.scriptName || '')}</td><td>${esc(q.status || '排队中')}</td>
+    <td>${q.local ? `<button class="btn btn--sm" type="button" data-action="multitest-queue-del" data-index="${i}">删除</button>` : '<span class="muted">—</span>'}</td></tr>`).join('');
+  const matRows = (t.materials || []).map((mm, i) => `<tr><td>${i + 1}</td><td>${esc(mm.name || mm.materialId)}</td><td>${esc(mm.type || '')}</td><td>${esc(mm.status || '')}</td>
+    <td><div class="actions actions--inline">
+      <button class="btn btn--sm" type="button" data-action="multitest-mat-up" data-index="${i}" ${dis(i > 0)}>上移</button>
+      <button class="btn btn--sm" type="button" data-action="multitest-mat-down" data-index="${i}" ${dis(i < (t.materials || []).length - 1)}>下移</button>
+      <button class="btn btn--sm btn--primary" type="button" data-action="multitest-mat-switch" data-id="${esc(mm.materialId)}" ${dis(hasSession && t.started)}>切换</button>
+    </div></td></tr>`).join('');
+  return `<div class="console">
+    <p class="hint-block">视频互动直播测试台：按如影控制台「视频互动直播测试」页的 5 步复刻。创建前先在「视频互动直播」里创建装修任务，拿到 FINISHED 素材的 materialId 再填进播放列表；播放列表没有单条删除接口（只有过渡视频素材删除），本站不提供删单条的按钮。</p>
+    ${t.error ? errorBlock(t.error, { retry: 'multitest-retry' }) : ''}
+    <div class="grid-2"><div>
+    ${step(1, '创建', '上传 JSON + 开始创建', `
+      <div class="form-field"><label for="multitest-name">直播间名称</label><input class="input" id="multitest-name" data-bind="multitest.name" value="${esc(t.name)}" maxlength="64" /></div>
+      <div class="form-field"><label for="multitest-script-file">脚本 JSON</label>
+        <input type="file" id="multitest-script-file" accept=".json,application/json" data-multitest-file />
+        <p class="field-hint">上传装修脚本 JSON（控制台第一步上传的文件）；${t.scriptFileName ? `已选：${esc(t.scriptFileName)}` : '未选文件（可不传，只填播放列表也能创建）。'}</p></div>
+      <div class="form-field"><label for="multitest-materials">播放列表素材 ID（每行一个）</label><textarea class="editor" id="multitest-materials" data-bind="multitest.materialIds" rows="3" placeholder="mat_xxx&#10;mat_yyy">${esc(t.materialIds || '')}</textarea>
+        <p class="field-hint">装修任务产出的 materialId，素材状态须为 FINISHED 才能用来创建直播。</p></div>
+      <div class="form-field"><label for="multitest-rtmp">推流 RTMP 地址（可选）</label><input class="input" id="multitest-rtmp" data-bind="multitest.rtmpUrl" value="${esc(t.rtmpUrl || '')}" placeholder="rtmp://…" /></div>
+      <div class="form-field"><label for="multitest-callback">回调地址 callbackUrl（可选）</label><input class="input" id="multitest-callback" data-bind="multitest.callbackUrl" value="${esc(t.callbackUrl || '')}" placeholder="https://…/callback" />
+        <p class="field-hint">直播创建时可按任务传回调地址；本站平时用轮询，不依赖回调。</p></div>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="multitest-create" ${dis(String(t.materialIds || '').trim() && !t.busy)}>${t.busy === 'create' ? '创建中…' : '开始创建'}</button></div>
+      ${hasSession ? `<p class="field-hint">会话编号 <code>${esc(sess.sessionId)}</code> · ${esc(sess.statusText || sess.status || '')}</p>` : ''}`)}
+    ${step(2, '启动', '每 60 秒心跳', `
+      <p class="muted">开播后开始推流，心跳每 60 秒自动发送一次；心跳丢失会在阈值后被动关闭。</p>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="multitest-start" ${dis(hasSession && !t.started && !t.busy)}>${t.busy === 'start' ? '启动中…' : t.started ? '已开播' : '开始直播'}</button></div>
+      ${t.started ? `<p class="field-hint">已开播 ${t.startedAt ? new Date(t.startedAt).toLocaleString('zh-CN', { hour12: false }) : ''} · 上次心跳 ${t.lastHeartbeatAt ? new Date(t.lastHeartbeatAt).toLocaleTimeString('zh-CN', { hour12: false }) : '—'}${t.heartbeatError ? ` · <span class="warn">心跳失败：${esc(t.heartbeatError)}</span>` : ''}</p>` : `<p class="field-hint">${hasSession ? '尚未开播。' : '请先创建直播间。'}</p>`}`)}
+    ${step(3, '接管队列管理', 'command/queue', `
+      <div class="form-field"><span class="field-label">接管类型</span><div class="radio-row" role="radiogroup" aria-label="接管类型">
+        <label><input type="radio" name="multitest-qtype" data-bind="multitest.queueType" value="0" ${t.queueType !== '1' && t.queueType !== '2' ? 'checked' : ''} /> 文字接管</label>
+        <label><input type="radio" name="multitest-qtype" data-bind="multitest.queueType" value="1" ${t.queueType === '1' ? 'checked' : ''} /> 音频接管</label>
+        <label><input type="radio" name="multitest-qtype" data-bind="multitest.queueType" value="2" ${t.queueType === '2' ? 'checked' : ''} /> 接管脚本</label></div></div>
+      ${t.queueType === '1'
+        ? `<div class="form-field"><label for="multitest-qaudio">音频地址</label><input class="input" id="multitest-qaudio" data-bind="multitest.queueAudioUrl" value="${esc(t.queueAudioUrl || '')}" placeholder="https://…/audio.mp3" /></div>`
+        : t.queueType === '2'
+          ? `<div class="form-field"><label for="multitest-qscript">接管脚本 JSON</label><textarea class="editor" id="multitest-qscript" data-bind="multitest.queueScript" rows="3" placeholder='{"version":"0.0.1", …}'>${esc(t.queueScript || '')}</textarea></div>`
+          : `<div class="form-field"><label for="multitest-qtext">接管文本</label><textarea class="editor" id="multitest-qtext" data-bind="multitest.queueText" rows="2" placeholder="输入要让数字人播报的话">${esc(t.queueText || '')}</textarea></div>`}
+      <div class="form-field"><label for="multitest-qmat">数字人素材 ID</label><input class="input" id="multitest-qmat" data-bind="multitest.queueMaterialId" value="${esc(t.queueMaterialId || '')}" placeholder="用于接管的数字人素材 ID（可空）" /></div>
+      <div class="form-field"><label for="multitest-qpri">优先级（0-100，默认 0）</label><input class="input" id="multitest-qpri" type="number" min="0" max="100" data-bind="multitest.queuePriority" value="${esc(String(t.queuePriority ?? 0))}" /></div>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="multitest-queue-add" ${dis(hasSession && !t.busy)}>加入接管队列</button>
+        <button class="btn" type="button" data-action="multitest-queue-refresh" ${dis(hasSession)}>手动刷新</button></div>
+      ${(t.queue || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">顺序</th><th scope="col">类型</th><th scope="col">接管内容</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>${queueRows}</tbody></table></div>` : '<p class="field-hint">队列为空；加入后按顺序触发，同一 commandTraceId 60 秒内重复提交视为同一条。</p>'}`)}
+    ${step(4, '播放素材顺序管理', '全量重排', `
+      <div class="form-field"><span class="field-label">冲突策略（本站前端行为）</span><div class="radio-row" role="radiogroup" aria-label="冲突策略">
+        <label><input type="radio" name="multitest-conflict" data-bind="multitest.conflict" value="force" ${t.conflict !== 'reject' ? 'checked' : ''} /> 强制切换（默认）</label>
+        <label><input type="radio" name="multitest-conflict" data-bind="multitest.conflict" value="reject" ${t.conflict === 'reject' ? 'checked' : ''} /> 接管中拒绝切换</label></div>
+        <p class="field-hint">选「接管中拒绝切换」时，接管队列非空就不发切换请求并说明原因。</p></div>
+      <div class="actions"><button class="btn" type="button" data-action="multitest-playback-refresh" ${dis(hasSession)}>刷新</button>
+        <button class="btn btn--primary" type="button" data-action="multitest-playback-save" ${dis(hasSession && (t.materials || []).length > 0)}>快速排序（提交当前顺序）</button></div>
+      ${(t.materials || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">顺序</th><th scope="col">素材名称</th><th scope="col">类型</th><th scope="col">播放状态</th><th scope="col">操作</th></tr></thead><tbody>${matRows}</tbody></table></div>` : '<p class="field-hint">还没有播放列表：点「刷新」从平台拉取；上移 / 下移调整顺序后点「快速排序」全量提交。</p>'}`)}
+    ${step(5, '结束直播', '', `
+      <p class="muted">不用时请关播，否则占用直播路数；10 分钟无心跳平台也会自动断播。</p>
+      <div class="actions"><button class="btn btn--primary" type="button" data-action="multitest-close" ${dis(hasSession && !t.busy)}>${t.busy === 'close' ? '关闭中…' : '结束直播'}</button></div>`)}
+    </div>
+    <div><div class="card"><div class="card__title"><h2>直播输出预览</h2>${t.started ? '<span class="pill pill--ok">直播中</span>' : hasSession ? '<span class="pill pill--info">已创建 · 未开播</span>' : '<span class="pill pill--mock">未创建</span>'}</div>
+      ${hasSession ? `<table class="table kv-table"><tbody>
+        <tr><th scope="row">会话编号</th><td><code>${esc(sess.sessionId)}</code></td></tr>
+        <tr><th scope="row">开播时长</th><td><span data-live-elapsed="multitest">${elapsed}</span></td></tr>
+        <tr><th scope="row">拉流 RTMP</th><td><code>${esc(sess.pullRtmpUrl || '—')}</code> ${sess.pullRtmpUrl ? `<button class="btn btn--sm" type="button" data-action="copy-text" data-text="${esc(sess.pullRtmpUrl)}">复制</button>` : ''}</td></tr>
+        <tr><th scope="row">拉流 FLV</th><td><code>${esc(sess.pullFlvUrl || '—')}</code> ${sess.pullFlvUrl ? `<button class="btn btn--sm" type="button" data-action="copy-text" data-text="${esc(sess.pullFlvUrl)}">复制</button>` : ''}</td></tr>
+        <tr><th scope="row">拉流 HLS</th><td><code>${esc(sess.pullHlsUrl || '—')}</code> ${sess.pullHlsUrl ? `<button class="btn btn--sm" type="button" data-action="copy-text" data-text="${esc(sess.pullHlsUrl)}">复制</button>` : ''}</td></tr>
+      </tbody></table>
+      <p class="field-hint">本站不内置播放器：拉流地址可复制到播放器里看；没有播放器就只显示拉流地址与状态，不编造播放画面。</p>`
+      : '<p class="muted">还没有直播间：按第 1 步填好播放列表素材 ID 并开始创建。</p>'}
+    </div></div></div></div>`;
+}
+
+/** 账单：控制台 /company/bill/bill 的 9 个页签 + 日期范围 + 本地导出 CSV + 发送邮箱（mailto）。
+ * algoGroup 用服务端可配置常量（默认 1）；第一轮探测 count 0 未定论，页面只展示接口返回，不写“无数据”的定性。 */
+export function billView(s) {
+  const b = s.bill;
+  const tabs = [
+    { id: 'avatar', label: '人物形象模型生成' }, { id: 'video', label: '视频合成' },
+    { id: 'live', label: '互动直播' }, { id: 'multi', label: '视频互动直播' },
+    { id: 'tts', label: '声音合成' }, { id: 'asr', label: 'ASR合成' },
+    { id: 'voice-model', label: '个人音色模型生成' }, { id: 'image-avatar', label: '图片数字人' },
+    { id: 'image-edit', label: '图片编辑' },
+  ];
+  const isVoice = b.tab === 'tts' || b.tab === 'asr';
+  const rows = (b.rows || []).map((r) => `<tr>
+    <td>${esc(r.billingDate || '')}</td><td><code>${esc(String(r.id || ''))}</code></td><td>${esc(r.taskName || '')}</td>
+    <td>${esc(String(r.algoType ?? ''))}</td><td>${esc(r.algoSubType1 || '')}</td><td>${esc(r.algoSubType2 || '')}</td>
+    <td>${esc(String(r.billingValue ?? ''))}</td><td>${esc(String(r.billingUnit ?? ''))}</td>
+    <td>${esc(r.startTime || '')}</td><td>${esc(r.endTime || '')}</td><td>${esc(String(r.status ?? ''))}</td></tr>`).join('');
+  return `<div class="console"><div class="card"><div class="card__title"><h2>账单</h2>
+      <span class="pill ${s.mode === 'real' ? 'pill--ok' : 'pill--mock'}">${s.mode === 'real' ? '真实环境 · 平台账单' : '演示环境 · 样例账单'}</span></div>
+    <p class="hint-block">按如影控制台「账单」页的 9 个页签查询：任务类按 algoType 查明细，声音合成与 ASR 合成按日 / 月统计。查询参数 algoGroup=${esc(String(b.algoGroup ?? 1))}（服务端配置，探测中）；图片数字人与图片编辑在账单接口里没有独立的 algoType，见各页签说明。</p>
+    <div class="filter-row" role="tablist" aria-label="账单页签">
+      ${tabs.map((t) => `<button class="chip ${b.tab === t.id ? 'is-on' : ''}" type="button" role="tab" aria-selected="${b.tab === t.id}" data-bill-tab="${t.id}">${esc(t.label)}</button>`).join('')}
+    </div>
+    <div class="filter-row">
+      <label>从 <input class="input" type="date" data-bind="bill.from" value="${esc(b.from)}" aria-label="开始日期" /></label>
+      <label>到 <input class="input" type="date" data-bind="bill.to" value="${esc(b.to)}" aria-label="结束日期" /></label>
+      ${isVoice ? `<label>统计 <select class="input" data-bind="bill.statRange" aria-label="统计范围">
+        <option value="1" ${b.statRange !== '2' ? 'selected' : ''}>日账单</option>
+        <option value="2" ${b.statRange === '2' ? 'selected' : ''}>月账单</option></select></label>
+      <label>来源 <select class="input" data-bind="bill.algoSubType1" aria-label="来源">
+        <option value="">全部</option>${['PAAS_HTTP', 'PAAS_WS', 'PAAS_VIDEO_2D', 'PAAS_VIDEO_MIX', 'PAAS_LIVE'].map((v) => `<option value="${v}" ${b.algoSubType1 === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label>服务资源 <select class="input" data-bind="bill.algoSubType2" aria-label="服务资源">
+        <option value="">全部</option>${(b.tab === 'tts' ? ['TTS3', 'TTS4', 'TTS5', 'TTS7', 'TTS8'] : ['ASR5']).map((v) => `<option value="${v}" ${b.algoSubType2 === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` : ''}
+      <button class="btn btn--primary btn--sm" type="button" data-action="bill-query" ${b.loading ? 'disabled aria-busy="true"' : ''}>${b.loading ? '查询中…' : '查询'}</button>
+      <button class="btn btn--sm" type="button" data-action="bill-csv" ${b.loading || !(b.rows || []).length ? 'disabled' : ''}>本地导出 CSV</button>
+      <button class="btn btn--sm" type="button" data-action="bill-mailto" ${!(b.rows || []).length ? 'disabled' : ''}>发送邮箱</button>
+    </div>
+    ${b.note ? `<div class="alert alert--info" role="note"><div class="alert__body"><p>${esc(b.note)}</p></div></div>` : ''}
+    ${b.error ? errorBlock(b.error, { retry: 'bill-query' }) : ''}
+    ${b.loading && !(b.rows || []).length ? loadingBlock('正在查询账单…')
+      : (b.rows || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">账单日期</th><th scope="col">任务/账单ID</th><th scope="col">任务名称</th><th scope="col">algoType</th><th scope="col">来源</th><th scope="col">服务资源</th><th scope="col">用量</th><th scope="col">单位</th><th scope="col">开始时间</th><th scope="col">结束时间</th><th scope="col">状态</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="hint-block">共 ${b.pagination?.count ?? b.rows.length} 条${b.usedSum !== null && b.usedSum !== undefined ? ` · 合计用量 ${esc(String(b.usedSum))}` : ''}（用量与单位按平台原值展示，单位口径以平台为准）。</p>`
+      : emptyState('没有查到账单记录', '换一个日期范围或页签再查；如果控制台里明明有账单而这里是空的，很可能是 algoGroup 取值不对（正在探测），不是没有数据。', '')}
+    <p class="hint-block">「发送邮箱」会打开你的邮箱客户端（mailto），由你自己发送，本站不代发邮件、不保存收件人。</p>
+  </div></div>`;
+}
+
+/** 互动直播管理：脚本库（本站 live_scripts 存储）+ 直播会话列表（tasks 表，只列本站创建过的） */
+export function liveScriptsView(s) {
+  const ls = s.livescripts;
+  const scriptRows = (ls.scripts || []).map((sc) => `<tr>
+    <td><b>${esc(sc.name)}</b></td><td>${esc(sc.source || '')}</td><td>${new Date(sc.createdAt).toLocaleString('zh-CN', { hour12: false })}</td>
+    <td><div class="actions actions--inline">
+      <button class="btn btn--sm btn--primary" type="button" data-action="livescript-open" data-id="${esc(sc.id)}">在编辑器中打开</button>
+      <button class="btn btn--sm" type="button" data-action="livescript-export" data-id="${esc(sc.id)}">导出 JSON</button>
+      <button class="btn btn--sm" type="button" data-action="livescript-share" data-id="${esc(sc.id)}">复制分享链接</button>
+      <button class="btn btn--sm" type="button" data-action="livescript-rename" data-id="${esc(sc.id)}">改名</button>
+      <button class="btn btn--sm" type="button" data-action="livescript-del" data-id="${esc(sc.id)}">删除</button>
+    </div></td></tr>`).join('');
+  const sessRows = (ls.sessions || []).map((x) => `<tr>
+    <td>${esc(x.name || x.id)}</td><td>${esc(x.capabilityName || x.capability)}</td><td><code>${esc(x.sessionId)}</code></td>
+    <td>${esc(x.statusText)}</td><td>${new Date(x.startedAt).toLocaleString('zh-CN', { hour12: false })}</td>
+    <td>${x.endedAt ? new Date(x.endedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+    <td>${x.durationSec !== null && x.durationSec !== undefined ? `${Math.floor(x.durationSec / 60)} 分 ${x.durationSec % 60} 秒` : '—'}</td>
+    <td>${esc(x.endReason || '')}</td></tr>`).join('');
+  return `<div class="console">
+    <div class="filter-row" role="tablist" aria-label="互动直播管理">
+      <button class="chip ${ls.tab !== 'sessions' ? 'is-on' : ''}" type="button" role="tab" aria-selected="${ls.tab !== 'sessions'}" data-livescripts-tab="scripts">脚本库</button>
+      <button class="chip ${ls.tab === 'sessions' ? 'is-on' : ''}" type="button" role="tab" aria-selected="${ls.tab === 'sessions'}" data-livescripts-tab="sessions">直播会话</button>
+    </div>
+    ${ls.error ? errorBlock(ls.error, { retry: 'livescripts-reload' }) : ''}
+    ${ls.tab === 'sessions' ? `<div class="card"><div class="card__title"><h2>直播会话</h2>
+        <button class="btn btn--sm" type="button" data-action="livescripts-reload" ${ls.loading ? 'disabled aria-busy="true"' : ''}>${ls.loading ? '刷新中…' : '刷新'}</button></div>
+      <p class="hint-block">平台没有直播会话列表接口，这里只列本站创建过的直播会话（直播内测、超级直播间 Pro、视频互动直播）；${esc(ls.note || '')}</p>
+      ${ls.loading && !(ls.sessions || []).length ? loadingBlock('正在读取会话…')
+        : (ls.sessions || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">名称</th><th scope="col">类型</th><th scope="col">会话编号</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">结束时间</th><th scope="col">直播时长</th><th scope="col">结束原因</th></tr></thead><tbody>${sessRows}</tbody></table></div>`
+        : emptyState('还没有直播会话', '在「直播内测」或「视频互动直播测试」里创建一次直播间，这里就会出现记录。', '<a class="btn btn--primary btn--sm" href="#livetest" data-view="livetest">去直播内测</a>')}
+    </div>` : `<div class="card"><div class="card__title"><h2>脚本库</h2>
+        <button class="btn btn--sm" type="button" data-action="livescripts-reload" ${ls.loading ? 'disabled aria-busy="true"' : ''}>${ls.loading ? '刷新中…' : '刷新'}</button></div>
+      <p class="hint-block">文档里没有互动直播脚本的创建 / 查询 / 列表接口，脚本不是平台独立资源（装修脚本随装修任务提交，接管脚本随接管队列提交）。本站用自己的脚本库保存直播脚本编辑器出的脚本；分享链接打开即进编辑器并载入该脚本。</p>
+      ${ls.loading && !(ls.scripts || []).length ? loadingBlock('正在读取脚本库…')
+        : (ls.scripts || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">名称</th><th scope="col">来源</th><th scope="col">创建时间</th><th scope="col">操作</th></tr></thead><tbody>${scriptRows}</tbody></table></div>`
+        : emptyState('脚本库还是空的', '在「直播脚本编辑」里编好脚本后点「保存到脚本库」，或在这里上传脚本 JSON。', '<a class="btn btn--primary btn--sm" href="#experience/live-script" data-view="experience">去直播脚本编辑</a>')}
+      <div class="form-field"><label for="livescripts-upload">上传脚本 JSON 到脚本库</label>
+        <input type="file" id="livescripts-upload" accept=".json,application/json" data-livescripts-file />
+        <p class="field-hint">上传控制台导出的直播脚本（liveScript_*.json），按文件名存进脚本库。</p></div>
+    </div>`}
+  </div>`;
+}
+
 export function settingsView(s) {
   const cfg = s.config;
   if (!cfg) return `<div class="console">${s.configError ? errorBlock(s.configError, { retry: 'reload-config' }) : loadingBlock('正在读取环境配置…')}</div>`;
@@ -628,6 +870,14 @@ export function settingsView(s) {
       </div>
     </div>
     <div class="card"><div class="card__title"><h2>平台 Token</h2>${real ? '<span class="pill pill--ok">真实环境</span>' : '<span class="pill pill--mock">演示环境</span>'}</div>${tokenBody}</div>
+    <div class="card"><div class="card__title"><h2>回调地址与订单</h2></div>
+      <p class="muted">回调地址与订单只能在如影控制台里查看和修改：平台没有提供设置回调地址或查询订单列表的接口（属于账号配置，需运营开通），本站也不会编造订单数据。</p>
+      <table class="table kv-table"><tbody>
+        <tr><th scope="row">任务回调地址</th><td>请在如影控制台设置；本站用轮询查询任务状态，不依赖回调</td></tr>
+        <tr><th scope="row">直播回调地址</th><td>请在如影控制台设置；视频互动直播创建时可单独传 callbackUrl</td></tr>
+        <tr><th scope="row">订单</th><td>请在如影控制台首页查看（服务期、订单号）</td></tr>
+      </tbody></table>
+      <a class="btn card__foot-btn" href="${PRODUCT.consoleUrl}" target="_blank" rel="noreferrer">打开如影控制台<span class="sr-only">（新窗口打开）</span></a></div>
   </div>`;
 }
 

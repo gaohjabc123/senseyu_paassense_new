@@ -20,7 +20,7 @@ test('health：返回服务名与 package.json 中的版本号（单一来源）
   assert.equal(j.data.status, 'ok');
   assert.equal(j.data.version, pkg.version);
   assert.equal(j.data.defaultMode, 'mock');
-  assert.equal(j.data.capabilities, 21);
+  assert.equal(j.data.capabilities, 24);
   assert.match(j.data.version, /^\d+\.\d+\.\d+$/);
 });
 
@@ -46,14 +46,14 @@ test('额度：不再提供写死的 /api/quota 假数据', async () => {
   assert.equal(j.status, 404);
 });
 
-test('capabilities：21 项能力、6 大类，与前端共用同一数据源', async () => {
+test('capabilities：24 项能力、6 大类，与前端共用同一数据源', async () => {
   const j = await s.get('/api/capabilities');
-  assert.equal(j.data.total, 21);
+  assert.equal(j.data.total, 24);
   assert.equal(j.data.groups, 6);
   assert.equal(j.data.total, j.data.stats.capabilities);
 });
 
-test('capability/run：全部 21 项能力在演示模式下都能跑通，结果标注为演示', async () => {
+test('capability/run：全部 24 项能力在演示模式下都能跑通，结果标注为演示', async () => {
   const list = (await s.get('/api/capabilities')).data.list;
   for (const c of list) {
     const detail = await s.get('/api/capability?id=' + c.id);

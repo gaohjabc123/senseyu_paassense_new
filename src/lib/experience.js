@@ -130,9 +130,11 @@ export function experienceView(s, cap, opts = {}) {
     return `${stepHead}<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${hintText ? `<small class="field-hint" id="${id}-hint">${esc(hintText)}</small>` : ''}</div>`;
   }).join('');
 
-  // 视频脚本：导入控制台导出的 JSON 回填表单（上传文件（.json）的同款入口）
-  const importRow = cap.id === 'video-script'
-    ? `<div class="actions" style="margin-bottom:12px"><label class="btn" for="exp-import-json">导入 JSON</label><input type="file" id="exp-import-json" class="sr-only" accept=".json,application/json" data-import-json tabindex="-1" ${busy ? 'disabled' : ''} /><span class="field-hint">控制台「导出视频合成脚本」的文件，或本站下载的 JSON，都能导回表单。</span></div>`
+  // 视频脚本 / 直播脚本：导入控制台导出的 JSON 回填表单（上传文件（.json）的同款入口）
+  const scriptCap = cap.id === 'video-script' || cap.id === 'live-script';
+  const exportName = cap.id === 'live-script' ? '导出直播脚本' : '导出视频合成脚本';
+  const importRow = scriptCap
+    ? `<div class="actions" style="margin-bottom:12px"><label class="btn" for="exp-import-json">导入 JSON</label><input type="file" id="exp-import-json" class="sr-only" accept=".json,application/json" data-import-json tabindex="-1" ${busy ? 'disabled' : ''} /><span class="field-hint">控制台「${exportName}」的文件，或本站下载的 JSON，都能导回表单。</span></div>`
     : '';
   const body = `${requiresCard(ex, s.config)}
     <div class="grid-2 exp-grid">
@@ -196,11 +198,14 @@ export function experienceResult(r, cap) {
       ? `<button class="btn" type="button" data-action="exp-copy-qid" data-qid="${esc(r.json.qid)}">复制 QID</button>` : '';
     const qidNote = cap.id === 'voice-clone' && r.mode === 'real' && r.json?.qid
       ? '<p class="field-hint">把这个 QID 发给管理员配到服务端，语音合成就能用这个音色。</p>' : '';
-    // 视频脚本：下载这份 param JSON（控制台「导出视频合成脚本」的同款文件）
-    const dlJson = cap.id === 'video-script'
+    // 视频脚本 / 直播脚本：下载这份 param JSON（控制台「导出视频合成脚本」/「导出直播脚本」的同款文件）
+    const dlJson = (cap.id === 'video-script' || cap.id === 'live-script')
       ? `<button class="btn" type="button" data-action="exp-download-json">下载 JSON</button>` : '';
+    // 直播脚本：存进本站脚本库（文档里没有脚本的创建/列表接口，脚本库是本站自己的存储）
+    const saveScript = cap.id === 'live-script'
+      ? `<button class="btn" type="button" data-action="exp-save-script">保存到脚本库</button>` : '';
     body = `<pre class="json-block" tabindex="0" aria-label="JSON 结果">${esc(r.jsonText || JSON.stringify(r.json, null, 2))}</pre>
-      ${qidNote}<div class="actions"><button class="btn" type="button" data-action="exp-copy">复制 JSON</button>${dlJson}${qidCopy}${save}</div>`;
+      ${qidNote}<div class="actions"><button class="btn" type="button" data-action="exp-copy">复制 JSON</button>${dlJson}${saveScript}${qidCopy}${save}</div>`;
   } else {
     body = `<div class="text-result">${esc(r.text || '')}</div>
       <div class="actions"><button class="btn" type="button" data-action="exp-copy">复制文本</button>${save}</div>`;

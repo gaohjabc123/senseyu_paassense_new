@@ -101,6 +101,58 @@ export const api = {
   taskList: (params = {}) => request(`tasks${qs(params)}`),
   /** 历史任务导入：POST /api/tasks/import，返回 { imported } */
   taskImport: (ids) => post('tasks/import', { ids }),
+
+  // 直播内测（控制台 /company/live/liveTest 的 5 步）：创建 / 开播 / 心跳 / 接管 / 替换前景背景 / 关播
+  liveTest: {
+    create: (body) => request('live/test/create', { method: 'POST', body, timeoutMs: 90000 }),
+    start: (sessionId) => post('live/test/start', { sessionId }),
+    heartbeat: (sessionId) => post('live/test/heartbeat', { sessionId }),
+    command: (body) => post('live/test/command', body),
+    replace: (body) => post('live/test/replace', body),
+    close: (sessionId) => post('live/test/close', { sessionId }),
+    takeoverWs: (sessionId) => request(`live/takeover-ws?sessionId=${encodeURIComponent(sessionId)}`),
+  },
+
+  // 视频互动直播测试（控制台 /company/live/multiVideoInteractiveTest 的 5 步）
+  multiTest: {
+    create: (body) => request('live/multi/create', { method: 'POST', body, timeoutMs: 90000 }),
+    start: (sessionId) => post('live/multi/start', { sessionId }),
+    heartbeat: (sessionId) => post('live/multi/heartbeat', { sessionId }),
+    queueAdd: (body) => post('live/multi/queue', body),
+    queueList: (sessionId) => request(`live/multi/queue?sessionId=${encodeURIComponent(sessionId)}`),
+    playback: (sessionId) => request(`live/multi/playback?sessionId=${encodeURIComponent(sessionId)}`),
+    playMaterials: (sessionId, materialIds) => request('live/multi/play-materials', { method: 'PUT', body: { sessionId, materialIds } }),
+    playSwitch: (sessionId, materialId) => post('live/multi/play-materials/switch', { sessionId, materialId }),
+    status: (sessionId) => request(`live/multi/status?sessionId=${encodeURIComponent(sessionId)}`),
+    close: (sessionId) => post('live/multi/close', { sessionId }),
+  },
+
+  // 账单：9 页签 + 日期范围；CSV 用 fetch + blob 下载（GET 也要带运行模式头，锚点直链带不上）
+  bill: {
+    list: (params = {}) => request(`bill${qs(params)}`),
+    tabs: () => [
+      { id: 'avatar', label: '人物形象模型生成' }, { id: 'video', label: '视频合成' },
+      { id: 'live', label: '互动直播' }, { id: 'multi', label: '视频互动直播' },
+      { id: 'tts', label: '声音合成' }, { id: 'asr', label: 'ASR合成' },
+      { id: 'voice-model', label: '个人音色模型生成' }, { id: 'image-avatar', label: '图片数字人' },
+      { id: 'image-edit', label: '图片编辑' },
+    ],
+    csv: async (params = {}) => {
+      const r = await fetch(`api/bill.csv${qs(params)}`, { method: 'GET', headers: headers(false) });
+      if (!r.ok) throw new ApiError({ message: '账单导出失败。', hint: '请稍后重试。', action: 'retry', status: r.status });
+      return r.blob();
+    },
+  },
+
+  // 互动直播脚本库（本站存储）与直播会话列表（tasks 表，只列本站创建过的）
+  liveScripts: {
+    list: () => request('live-scripts'),
+    get: (id) => request(`live-scripts/${encodeURIComponent(id)}`),
+    create: (body) => post('live-scripts', body),
+    rename: async (id, name) => (await patch(`live-scripts/${encodeURIComponent(id)}`, { name })).script,
+    remove: (id) => del(`live-scripts/${encodeURIComponent(id)}`),
+  },
+  liveSessions: () => request('live-sessions'),
   runCapability: (id, params) => request('capability/run', { method: 'POST', body: { id, params }, timeoutMs: 90000 }),
   kbList: () => request('kb'),
   kbDelete: (id) => del(`kb?id=${encodeURIComponent(id)}`),

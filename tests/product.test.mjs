@@ -44,6 +44,36 @@ test('capabilities：场景引用的能力 id 都真实存在', () => {
   }
 });
 
+test('capabilities：教育培训排在应用场景首位，覆盖备课到直播全流程', () => {
+  assert.equal(SCENARIOS[0].name, '教育培训', '教育培训须排在应用场景首位');
+  const caps = SCENARIOS[0].caps;
+  // 备课：讲稿改写、课件配图；形象：教师分身、本人口音、录课抠像
+  for (const id of ['voice-nlp', 'image-edit', 'avatar-train', 'voice-clone', 'avatar-green']) assert.ok(caps.includes(id), `教育培训缺 ${id}`);
+  // 出课：文本驱动视频、精品课编排、照片出课、课程旁白
+  for (const id of ['video-tts', 'video-script', 'video-image', 'voice-tts']) assert.ok(caps.includes(id), `教育培训缺 ${id}`);
+  // 答疑与直播：课程知识库、AI 助教、直播课脚本、在线授课、互动直播
+  for (const id of ['nlp-kb', 'nlp-chat', 'live-script', 'live-pro', 'live-multi']) assert.ok(caps.includes(id), `教育培训缺 ${id}`);
+  assert.ok(!caps.includes('avatar-terminal'), '终端模型转换无接口，不进场景');
+  assert.equal(new Set(caps).size, caps.length, '场景能力不重复');
+});
+
+test('capabilities：共 24 项；超级直播间创建不用 avatarType；Qid 查询与唱歌合成已补齐', () => {
+  assert.equal(CAPABILITIES.length, 24, '能力总数须与文案里的 24 项一致（改数时同步改 product.js / views.js / guide.js）');
+  const pro = capById('live-pro');
+  assert.ok(pro, 'live-pro 存在');
+  assert.ok(!(pro.experience.fields || []).some((f) => f.key === 'avatarType'), 'avatarType 是训练参数，不是创建参数，live-pro 表单不许有该字段');
+  assert.ok((pro.experience.fields || []).some((f) => f.key === 'avatar'), 'live-pro 须有系统形象选择器');
+  assert.ok(capById('live-pro-control'), '超级直播间接管控制已补齐');
+  assert.equal(capById('live-pro-control').realApi, '/api/2dvh/v1/material/live/super/pro/channel/control');
+  const qid = capById('voice-qid');
+  assert.ok(qid, 'Qid 查询已补齐');
+  assert.equal(qid.realApi, '/api/voice/v3/tts/qid/{qid}');
+  const singing = capById('voice-singing');
+  assert.ok(singing, '唱歌合成已补齐');
+  assert.equal(singing.realApi, null, '唱歌合成文档无接口，realApi 须为空');
+  assert.match(singing.experience.notes || '', /没有唱歌合成接口/);
+});
+
 test('capabilities：接入流程四步且与官方快速集成一致', () => {
   assert.equal(INTEGRATION_STEPS.length, 4);
   assert.deepEqual(INTEGRATION_STEPS.map((x) => x.n), ['01', '02', '03', '04']);
@@ -130,7 +160,7 @@ test('能力矩阵在工作台区：总览之后，产品区只剩对外介绍',
   const site = NAV_SECTIONS.find((s) => s.id === 'site').items.map((i) => i.id);
   const consoleIds = NAV_SECTIONS.find((s) => s.id === 'console').items.map((i) => i.id);
   assert.deepEqual(site, ['home', 'scenarios', 'integration'], '产品区只剩首页、应用场景、接入指南');
-  assert.deepEqual(consoleIds, ['overview', 'capabilities', 'create', 'taskcenter', 'tasks', 'settings'], '工作台动线是总览 → 矩阵 → 创作 → 任务 → 作品 → 环境与配置');
+  assert.deepEqual(consoleIds, ['overview', 'capabilities', 'create', 'taskcenter', 'livetest', 'multitest', 'livescripts', 'bill', 'tasks', 'settings'], '工作台动线是总览 → 矩阵 → 创作 → 任务 → 直播内测 → 互动直播测试 → 互动直播管理 → 账单 → 作品 → 环境与配置');
   assert.equal(navById('capabilities').section, 'console', '能力矩阵的导航分组应是工作台');
   assert.ok(SITE_VIEWS.includes('capabilities'), '能力矩阵渲染仍是站内页（自带标题，不显示工作台标题栏）');
 });

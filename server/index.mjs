@@ -18,7 +18,7 @@ import { createRuyingClient, normalizeDuration, TASK_STATUS_TEXT } from './lib/r
 import { DEMO_AVATARS } from './lib/demo-avatars.mjs';
 import { KbStore } from './lib/kb.mjs';
 import { answerQuestion, completeDeepSeek } from './lib/answer.mjs';
-import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveChannelParam, buildDecorationTaskBody, buildContentRepoBody, buildWarmingBody, buildTranscodeBody, buildTransitionBody, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
+import { buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody, buildGreenPreviewBody, buildVideoCreateParam, buildLiveScriptParam, buildLiveChannelParam, buildSuperProChannelParam, buildSuperProControlParam, buildDecorationTaskBody, buildContentRepoBody, buildWarmingBody, buildTranscodeBody, buildTransitionBody, buildLiveCommandParam, buildMultiChannelCreateBody, buildMultiCommandQueueBody, buildBillListBody, buildBillVoiceListBody, billTabOf, BILL_TABS, normalizeBillRow, extractTaskResult, assertVendorQuota } from './lib/realcap.mjs';
 import { maskValue, redactText } from './lib/mask.mjs';
 import { AppError, E, toAppError, errorBody } from './lib/errors.mjs';
 import { openDb } from './lib/db.mjs';
@@ -77,6 +77,49 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
   function updateTaskRow(id, status, result) {
     try { db.prepare('UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?').run(Number(status) || 1, result ? JSON.stringify(result) : '', Date.now(), String(id)); } catch { /* ignore */ }
   }
+
+  /** 直播会话登记：sessionId 即任务编号（tasks 表），创建即 status 2 进行中；
+   * 关播后置 5 并写入结束时间、直播时长与结束原因。互动直播管理页的唯一来源。 */
+  function recordLiveSession(sessionId, workspace, vendorId, capability, name, info) {
+    recordTask(sessionId, workspace, vendorId, capability, name, null);
+    try {
+      db.prepare('UPDATE tasks SET status = 2, result = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify({ sessionId, ...info, startedAt: Date.now() }), Date.now(), String(sessionId));
+    } catch { /* ignore */ }
+  }
+  function closeLiveSession(sessionId, endReason) {
+    try {
+      const row = db.prepare('SELECT result FROM tasks WHERE id = ?').get(String(sessionId));
+      let info = {};
+      try { info = row?.result ? JSON.parse(row.result) : {}; } catch { info = {}; }
+      const startedAt = Number(info.startedAt) || Date.now();
+      info.sessionId = String(sessionId);
+      info.endedAt = Date.now();
+      info.durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+      info.endReason = endReason || '手动关闭';
+      db.prepare('UPDATE tasks SET status = 5, result = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify(info), Date.now(), String(sessionId));
+      return info;
+    } catch { return null; }
+  }
+  /** 任务行转直播会话形状（互动直播管理页用） */
+  function publicLiveSession(row) {
+    let info = {};
+    try { info = row.result ? JSON.parse(row.result) : {}; } catch { info = {}; }
+    const cap = capById(row.capability);
+    return {
+      id: String(row.id), capability: row.capability || '', capabilityName: cap?.name || row.capability || '',
+      name: row.name || '', status: Number(row.status) || 1,
+      statusText: TASK_STATUS_TEXT[Number(row.status)] || '未知',
+      sessionId: info.sessionId || String(row.id),
+      pullRtmpUrl: info.pullRtmpUrl || '', pullFlvUrl: info.pullFlvUrl || '', pullHlsUrl: info.pullHlsUrl || '',
+      liveAddress: info.liveAddress || '',
+      startedAt: info.startedAt || row.created_at, endedAt: info.endedAt || null,
+      durationSec: info.durationSec ?? null, endReason: info.endReason || '',
+      createdAt: row.created_at, updatedAt: row.updated_at,
+    };
+  }
+  const randomId = (prefix) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
   /** 任务行转前端形状：结果 JSON 解析失败时返回 null，不抛错 */
   const publicTask = (row) => {
@@ -424,16 +467,57 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       }
       if (cap.id === 'live-script' || cap.id === 'live-pro') {
         await assertVendorQuota(client, 'liveDuration', 1, '直播');
-        const body = buildLiveChannelParam(params, { qid, faceFeatureId: cfg.liveFaceFeatureId, fileId: cfg.liveFileId });
+        // 直播脚本：表单里选的发音人（下拉/直接输 QID）优先于服务端默认音色
+        const liveQid = cap.id === 'live-script'
+          ? (String(params.qidInput || '').trim() || String(params.qid || '').trim() || qid)
+          : qid;
+        if (cap.id === 'live-script') {
+          const body = buildLiveChannelParam(params, { qid: liveQid, faceFeatureId: cfg.liveFaceFeatureId, fileId: cfg.liveFileId });
+          const session = await client.createLiveChannel(body);
+          const json = {
+            sessionId: session.sessionId,
+            status: session.status,
+            statusText: session.status === 35 ? '视频流创建完成、可开播' : session.status === 32 ? '视频流创建中' : `状态 ${session.status}`,
+            pullRtmpUrl: session.pullRtmpUrl || '', pullFlvUrl: session.pullFlvUrl || '', pullHlsUrl: session.pullHlsUrl || '',
+          };
+          return syncJson(json, '直播间已创建，开始计时；尚未开播。开播需调 start 接口并每 60 秒发送心跳；不发送心跳会在阈值后被动关闭。');
+        }
+        // 超级直播间 Pro：与普通直播共用创建接口，但 digital_role 用模型 zip 地址 url（不是预热素材 fileId）；
+        // avatarType 不是创建参数，不发。形象编号与名称从平台形象列表按 face_feature_id 查回。
+        const proFaceFeatureId = String(params.faceFeatureId || '').trim() || cfg.liveFaceFeatureId || '';
+        const proModelUrl = String(params.modelUrl || '').trim() || cfg.liveModelUrl || '';
+        let proAvatarId = '';
+        let proAvatarName = '';
+        try {
+          const avatars = await client.appearanceList();
+          const picked = (avatars || []).find((a) => String(a.faceFeatureId || '') === proFaceFeatureId);
+          if (picked) { proAvatarId = String(picked.id || ''); proAvatarName = picked.name || ''; }
+        } catch { /* 形象列表失败不挡创建，id/name 留空 */ }
+        const body = buildSuperProChannelParam(params, { qid: liveQid, avatarId: proAvatarId, avatarName: proAvatarName, faceFeatureId: proFaceFeatureId, modelUrl: proModelUrl });
         const session = await client.createLiveChannel(body);
         const json = {
           sessionId: session.sessionId,
           status: session.status,
           statusText: session.status === 35 ? '视频流创建完成、可开播' : session.status === 32 ? '视频流创建中' : `状态 ${session.status}`,
           pullRtmpUrl: session.pullRtmpUrl || '', pullFlvUrl: session.pullFlvUrl || '', pullHlsUrl: session.pullHlsUrl || '',
-          ...(cap.id === 'live-pro' ? { controlApi: 'POST /api/2dvh/v1/material/live/super/pro/channel/control（切换数字人 / 前景 / 背景）' } : {}),
+          liveAddress: session.liveAddress || '',
+          controlApi: 'POST /api/2dvh/v1/material/live/super/pro/channel/control（切换数字人 / 前景 / 背景）',
         };
-        return syncJson(json, '直播间已创建，开始计时；尚未开播。开播需调 start 接口并每 60 秒发送心跳；不发送心跳会在阈值后被动关闭。');
+        return syncJson(json, '超级直播间已创建，开始计时；尚未开播。开播需调 start 接口并每 60 秒发送心跳；不发送心跳会在阈值后被动关闭。');
+      }
+      if (cap.id === 'live-pro-control') {
+        const body = buildSuperProControlParam(params);
+        const ok2 = await client.superProControl(body.sessionId, JSON.parse(body.param));
+        return syncJson({ sessionId: body.sessionId, accepted: ok2 === true || ok2 === undefined ? true : ok2, note: '平台已接收，满足触发条件后自动触发' }, '接管控制已提交，平台只返回接收成功，满足触发条件后自动触发。');
+      }
+      if (cap.id === 'voice-qid') {
+        const q = String(params.qid || '').trim();
+        if (!q) throw E.validation('请填写发音人 QID。');
+        const detail = await client.qidDetail(q);
+        return syncJson({ qid: q, ...detail }, '发音人详情已查到；pitch/speed/volume 表示是否支持调音调/语速/音量，ussml 列出支持的标签，languages 列出支持的语言。');
+      }
+      if (cap.id === 'voice-singing') {
+        return syncJson({ available: false, reason: '文档里没有唱歌合成接口', doc: '飞书《如影数字人 PaaS 产品文档》语音处理篇无此接口（2026-11-17 核查）', alternative: '普通配音请用「语音合成 TTS」，音色复刻请用「音色复刻」。' }, '平台没有这个接口，本次没有调用平台、不扣额度。');
       }
       if (cap.id === 'live-multi') {
         const body = buildDecorationTaskBody(params, { faceFeatureId: cfg.liveFaceFeatureId });
@@ -842,6 +926,331 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
     res.end(t);
   }
 
+  /* ---------- 路由：直播内测 / 视频互动直播测试 / 账单 / 直播脚本库 ----------
+   * 口径以 2026-11-17 飞书文档核查为准（文档 V1.5.2），见 server/lib/realcap.mjs；
+   * 文档里没有的接口不调、不假装有（互动直播脚本无独立接口，走本站 live_scripts 表；
+   * 图片编辑无独立 algoType，不调接口直接说明；回调地址与订单无接口，设置页只放说明卡）。 */
+  const mockSession = (prefix) => {
+    const sessionId = `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
+    return { sessionId, status: 35, statusText: '视频流创建完成、可开播', pullRtmpUrl: 'rtmp://demo.live/live', pullFlvUrl: 'https://demo.invalid/live.flv', pullHlsUrl: 'https://demo.invalid/live.m3u8', liveAddress: `${sessionId}|rtmp://demo.live/live|rtc_demo_token` };
+  };
+  const mockMultiQueue = () => ([
+    { order: 1, type: 0, content: '欢迎来到直播间，今天为大家带来三款好物。', status: '排队中', commandTraceId: '', raw: {} },
+    { order: 2, type: 0, content: '现在介绍第二款：智能手表，支持全天心率监测。', status: '排队中', commandTraceId: '', raw: {} },
+  ]);
+  const mockPlayback = () => ([
+    { materialId: 'mat_demo_1', name: '开场视频', type: '视频', status: '播放中', raw: {} },
+    { materialId: 'mat_demo_2', name: '产品介绍', type: '视频', status: '等待播放', raw: {} },
+  ]);
+  // 演示账单行：语音行按 2026-11-17 容器实测的真值形状（billingValue 0.0108、billingUnit 3、PAAS_HTTP/TTS3）
+  const mockBillRows = (tab, from, to) => {
+    if (tab.kind === 'voice') return [
+      { id: 'bill_demo_1', algoType: tab.algoType, billingDate: to, billingValue: 0.0108, billingUnit: 3, algoSubType1: 'PAAS_HTTP', algoSubType2: tab.algoType === 31 ? 'TTS3' : 'ASR5', startTime: '', endTime: '', status: '', taskName: '' },
+      { id: 'bill_demo_2', algoType: tab.algoType, billingDate: to, billingValue: 0.0216, billingUnit: 3, algoSubType1: 'PAAS_WS', algoSubType2: tab.algoType === 31 ? 'TTS5' : 'ASR5', startTime: '', endTime: '', status: '', taskName: '' },
+    ];
+    return [
+      { id: 'bill_demo_1', algoType: tab.algoType, billingDate: to, billingValue: 0.62, billingUnit: 1, algoSubType1: '', algoSubType2: '', startTime: `${from} 10:00:00`, endTime: `${from} 10:00:37`, status: 5, taskName: '演示账单行（样例）' },
+    ];
+  };
+  const pickList = (data) => {
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') {
+      for (const k of ['list', 'records', 'result', 'queue', 'playMaterials', 'items']) if (Array.isArray(data[k])) return data[k];
+    }
+    return [];
+  };
+  const normalizeMultiQueue = (data) => pickList(data).map((r, i) => ({
+    order: Number(r.order ?? r.seq ?? i + 1) || i + 1,
+    type: r.type ?? '',
+    content: String(r.content ?? r.text ?? r.param ?? '').slice(0, 120),
+    status: r.status ?? r.state ?? '',
+    commandTraceId: r.commandTraceId || '',
+    raw: r,
+  }));
+  const normalizePlayback = (data) => pickList(data).map((r) => ({
+    materialId: String(r.materialId ?? r.material_id ?? r.id ?? ''),
+    name: String(r.name ?? r.materialName ?? r.materialId ?? ''),
+    type: String(r.type ?? r.materialType ?? ''),
+    status: String(r.status ?? r.playStatus ?? r.state ?? ''),
+    raw: r,
+  }));
+
+  /** 账单查询（/api/bill 与 /api/bill.csv 共用）：页签→algoType 映射见 realcap.BILL_TABS；
+   * algoGroup 用服务端可配置常量 cfg.billAlgoGroup（默认 1，环境变量 RUYING_BILL_ALGO_GROUP），
+   * 第一轮探测 count 0 未定论，等第二轮结果再定死。 */
+  async function queryBill(ctx, mode, sp) {
+    const tab = billTabOf(sp.get('tab') || 'video');
+    const today = new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const to = sp.get('to') || iso(today);
+    const from = sp.get('from') || iso(new Date(today.getTime() - 29 * 86400000));
+    const pageNo = Math.max(1, Number(sp.get('pageNo')) || 1);
+    const pageSize = Math.min(1000, Math.max(1, Number(sp.get('pageSize')) || 50));
+    if (tab.kind === 'none') return { tab: tab.id, label: tab.label, kind: 'none', algoType: null, mode, note: tab.note, rows: [], usedSum: null, pagination: null, algoGroup: cfg.billAlgoGroup, from, to };
+    if (mode !== 'real') {
+      const rows = mockBillRows(tab, from, to);
+      const usedSum = rows.reduce((s, r) => s + (Number(r.billingValue) || 0), 0);
+      return { tab: tab.id, label: tab.label, kind: tab.kind, algoType: tab.algoType, mode: 'mock', note: tab.note || '', rows, usedSum: String(Math.round(usedSum * 10000) / 10000), pagination: { count: rows.length, pageNo, pageSize }, algoGroup: cfg.billAlgoGroup, from, to };
+    }
+    const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
+    const tok = await rt.tokens.get();
+    const owner = tok?.userId;
+    if (!owner) throw E.upstream(400, '平台未返回用户编号，无法查询账单。', 'bill without userId');
+    if (tab.kind === 'voice') {
+      const statRange = Number(sp.get('statRange')) === 2 ? 2 : 1;
+      const body = buildBillVoiceListBody({ owner, algoType: tab.algoType, from, to, algoSubType1: sp.get('algoSubType1') || '', algoSubType2: sp.get('algoSubType2') || '', statRange });
+      const data = await rt.client.billVoiceList(body);
+      return { tab: tab.id, label: tab.label, kind: 'voice', algoType: tab.algoType, mode: 'real', statRange, note: '', rows: (Array.isArray(data?.result) ? data.result : []).map(normalizeBillRow), usedSum: data?.usedSum ?? null, pagination: data?.pagination || null, algoGroup: cfg.billAlgoGroup, from, to };
+    }
+    const body = buildBillListBody({ owner, algoType: tab.algoType, from, to, algoGroup: cfg.billAlgoGroup, pageNo, pageSize });
+    const data = await rt.client.billList(body);
+    return { tab: tab.id, label: tab.label, kind: 'task', algoType: tab.algoType, mode: 'real', note: tab.note || '', rows: (Array.isArray(data?.result) ? data.result : []).map(normalizeBillRow), usedSum: data?.usedSum ?? null, pagination: data?.pagination || null, algoGroup: cfg.billAlgoGroup, from, to };
+  }
+
+  function sendBillCsv(res, payload) {
+    const head = ['账单日期', '任务/账单ID', '任务名称', 'algoType', '来源', '服务资源', '用量', '单位', '开始时间', '结束时间', '状态'];
+    const lines = payload.rows.map((r) => [r.billingDate, r.id, r.taskName, r.algoType, r.algoSubType1, r.algoSubType2, r.billingValue, r.billingUnit, r.startTime, r.endTime, r.status].map(csvCell).join(','));
+    const note = payload.note ? `# ${payload.note}\r\n` : '';
+    const t = '\uFEFF' + note + [head.join(','), ...lines].join('\r\n');
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="bill-${payload.tab}-${payload.from}_to_${payload.to}.csv"`, 'Cache-Control': 'no-store' });
+    res.end(t);
+  }
+
+  async function liveRoutes(req, res, p, url, ctx) {
+    const m = req.method;
+    const sp = url.searchParams;
+    const mode = modeOf(req, ctx);
+    const ws = workspaceOf(req, ctx);
+
+    // ---- 麦克风接管 WS 地址（真实环境；Token 由服务端拼进 URL，前端不得打日志） ----
+    if (p === '/api/live/takeover-ws' && m === 'GET') {
+      const sessionId = String(sp.get('sessionId') || '').trim();
+      if (!sessionId) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { available: false, reason: '演示环境没有真实直播间，麦克风接管只在真实环境可用。' });
+      guard(ctx, 'live-script', 'live.test.mic');
+      const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
+      const tok = await rt.tokens.get();
+      const host = new URL(rt.vcfg.baseUrl).host;
+      const wsUrl = `wss://${host}/api/live-takeover-cc/v1/material/live/channel/command/microphone?clientType=BROWSER&sessionId=${encodeURIComponent(sessionId)}&Authorization=${encodeURIComponent(tok.accessToken)}`;
+      return ok(res, { available: true, wsUrl });
+    }
+
+    // ---- 直播内测：创建 / 开播 / 心跳 / 接管 / 替换前景背景 / 关播 ----
+    if (p === '/api/live/test/create' && m === 'POST') {
+      guard(ctx, 'live-script', 'live.test.create');
+      const body = await readBody(req);
+      const name = String(body.name || '直播内测').slice(0, 64);
+      let script = String(body.script || '').trim();
+      let qid = String(body.qid || body.qidInput || '').trim();
+      if (body.scriptJson) {
+        let j;
+        try { j = typeof body.scriptJson === 'string' ? JSON.parse(body.scriptJson) : body.scriptJson; } catch { throw E.validation('直播脚本 JSON 解析失败，请确认文件是控制台导出的脚本。'); }
+        const scene = j?.sceneList?.[0];
+        if (!scene?.tts_query?.content) throw E.validation('这个 JSON 不是直播脚本（缺少 sceneList[0].tts_query.content）。');
+        script = String(scene.tts_query.content);
+        if (!qid && scene.tts_config?.qid) qid = String(scene.tts_config.qid);
+      }
+      if (!script) throw E.validation('请先上传直播脚本 JSON（控制台「导出直播脚本」的文件）。');
+      if (mode !== 'real') {
+        return ok(res, { ...mockSession('sess_demo'), name, mode: 'mock', note: '演示环境：会话编号与拉流地址为样例，未创建真实直播间。' });
+      }
+      const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
+      await assertVendorQuota(rt.client, 'liveDuration', 1, '直播');
+      const session = await track(ctx, { action: 'live.test.create', capability: 'live-script', mode }, () =>
+        rt.client.createLiveChannel(buildLiveChannelParam({ script }, { qid: qid || rt.vcfg.ttsQid || cfg.ttsQid || '', faceFeatureId: cfg.liveFaceFeatureId, fileId: cfg.liveFileId })));
+      const info = { name, pullRtmpUrl: session.pullRtmpUrl || '', pullFlvUrl: session.pullFlvUrl || '', pullHlsUrl: session.pullHlsUrl || '', liveAddress: session.liveAddress || '' };
+      recordLiveSession(session.sessionId, ws, ctx.access.vendorId, 'live-script', name, info);
+      return ok(res, { sessionId: session.sessionId, status: session.status, statusText: session.status === 35 ? '视频流创建完成、可开播' : session.status === 32 ? '视频流创建中' : `状态 ${session.status}`, ...info, mode: 'real' });
+    }
+    if (p === '/api/live/test/start' && m === 'POST') {
+      guard(ctx, 'live-script', 'live.test.start');
+      const { sessionId } = await readBody(req);
+      if (!String(sessionId || '').trim()) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', startedAt: Date.now(), note: '演示环境：未真正开播。' });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.liveStart(String(sessionId).trim());
+      return ok(res, { ok: true, mode: 'real', startedAt: Date.now() });
+    }
+    if (p === '/api/live/test/heartbeat' && m === 'POST') {
+      guard(ctx, 'live-script', 'live.test.heartbeat');
+      const { sessionId } = await readBody(req);
+      if (!String(sessionId || '').trim()) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', at: Date.now() });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.liveHeartbeat(String(sessionId).trim());
+      return ok(res, { ok: true, mode: 'real', at: Date.now() });
+    }
+    if (p === '/api/live/test/command' && m === 'POST') {
+      guard(ctx, 'live-script', 'live.test.command');
+      const body = await readBody(req);
+      const { sessionId, param } = buildLiveCommandParam(body);
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', commandTraceId: `mock-${Date.now().toString(36)}`, note: '演示环境：接管未发给平台。' });
+      const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
+      const r = await rt.client.liveCommand(sessionId, JSON.parse(param));
+      return ok(res, { ok: true, mode: 'real', commandTraceId: r?.commandTraceId || r?.command_trace_id || '', result: r });
+    }
+    if (p === '/api/live/test/replace' && m === 'POST') {
+      guard(ctx, 'live-script', 'live.test.replace');
+      const body = await readBody(req);
+      const built = buildSuperProControlParam(body);
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', note: '演示环境：替换未发给平台。' });
+      const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
+      await rt.client.superProControl(built.sessionId, JSON.parse(built.param));
+      return ok(res, { ok: true, mode: 'real' });
+    }
+    if (p === '/api/live/test/close' && m === 'POST') {
+      guard(ctx, 'live-script', 'live.test.close');
+      const { sessionId } = await readBody(req);
+      if (!String(sessionId || '').trim()) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', note: '演示环境：没有真实直播间可关闭。' });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.liveClose(String(sessionId).trim());
+      const info = closeLiveSession(String(sessionId).trim(), '手动关闭');
+      return ok(res, { ok: true, mode: 'real', endedAt: info?.endedAt || Date.now(), durationSec: info?.durationSec ?? null });
+    }
+
+    // ---- 视频互动直播测试：创建 / 开播 / 心跳 / 接管队列 / 播放顺序 / 状态 / 关播 ----
+    if (p === '/api/live/multi/create' && m === 'POST') {
+      guard(ctx, 'live-multi', 'live.multi.create');
+      const body = await readBody(req);
+      if (mode !== 'real') {
+        return ok(res, { ...mockSession('msess_demo'), name: String(body.name || '互动直播').slice(0, 64), mode: 'mock', note: '演示环境：会话编号与拉流地址为样例，未创建真实直播间。' });
+      }
+      const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
+      await assertVendorQuota(rt.client, 'videoInteractiveLive', 1, '视频互动直播');
+      const built = buildMultiChannelCreateBody(body);
+      const session = await track(ctx, { action: 'live.multi.create', capability: 'live-multi', mode }, () => rt.client.createMultiChannel(built));
+      const info = { name: built.name, pullRtmpUrl: session.pullRtmpUrl || '', pullFlvUrl: session.pullFlvUrl || '', pullHlsUrl: session.pullHlsUrl || '', liveAddress: session.liveAddress || '' };
+      recordLiveSession(session.sessionId, ws, ctx.access.vendorId, 'live-multi', built.name, info);
+      return ok(res, { sessionId: session.sessionId, status: session.status, ...info, mode: 'real' });
+    }
+    if (p === '/api/live/multi/start' && m === 'POST') {
+      guard(ctx, 'live-multi', 'live.multi.start');
+      const { sessionId } = await readBody(req);
+      if (!String(sessionId || '').trim()) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', startedAt: Date.now(), note: '演示环境：未真正开播。' });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiChannelStart(String(sessionId).trim());
+      return ok(res, { ok: true, mode: 'real', startedAt: Date.now() });
+    }
+    if (p === '/api/live/multi/heartbeat' && m === 'POST') {
+      guard(ctx, 'live-multi', 'live.multi.heartbeat');
+      const { sessionId } = await readBody(req);
+      if (!String(sessionId || '').trim()) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', at: Date.now() });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiHeartbeat(String(sessionId).trim());
+      return ok(res, { ok: true, mode: 'real', at: Date.now() });
+    }
+    if (p === '/api/live/multi/queue' && m === 'POST') {
+      guard(ctx, 'live-multi', 'live.multi.queue');
+      const body = await readBody(req);
+      const built = buildMultiCommandQueueBody(body);
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', commandTraceId: built.commandTraceId, note: '演示环境：接管未发给平台。' });
+      const rt = runtimeFor(ctx.access.vendorId, ctx.access.canBill);
+      const r = await rt.client.multiCommandQueue(built);
+      return ok(res, { ok: true, mode: 'real', commandTraceId: built.commandTraceId, result: r });
+    }
+    if (p === '/api/live/multi/queue' && m === 'GET') {
+      guard(ctx, 'live-multi', 'live.multi.queue.list');
+      const sessionId = String(sp.get('sessionId') || '').trim();
+      if (!sessionId) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { mode: 'mock', queue: mockMultiQueue(), note: '演示环境：队列为样例。' });
+      const data = await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiQueueList(sessionId);
+      return ok(res, { mode: 'real', queue: normalizeMultiQueue(data), raw: data });
+    }
+    if (p === '/api/live/multi/playback' && m === 'GET') {
+      guard(ctx, 'live-multi', 'live.multi.playback');
+      const sessionId = String(sp.get('sessionId') || '').trim();
+      if (!sessionId) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { mode: 'mock', materials: mockPlayback(), note: '演示环境：播放列表为样例。' });
+      const data = await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiPlayback(sessionId);
+      return ok(res, { mode: 'real', materials: normalizePlayback(data), raw: data });
+    }
+    if (p === '/api/live/multi/play-materials' && m === 'PUT') {
+      guard(ctx, 'live-multi', 'live.multi.play-materials');
+      const body = await readBody(req);
+      const sessionId = String(body.sessionId || '').trim();
+      const materialIds = (Array.isArray(body.materialIds) ? body.materialIds : String(body.materialIds || '').split(/[\r\n,，]+/)).map((s) => String(s).trim()).filter(Boolean);
+      if (!sessionId) throw E.validation('缺少会话编号 sessionId。');
+      if (!materialIds.length) throw E.validation('请至少填一个素材 ID。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', note: '演示环境：排序未发给平台。' });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiPlayMaterials(sessionId, materialIds);
+      return ok(res, { ok: true, mode: 'real' });
+    }
+    if (p === '/api/live/multi/play-materials/switch' && m === 'POST') {
+      guard(ctx, 'live-multi', 'live.multi.play-switch');
+      const body = await readBody(req);
+      const sessionId = String(body.sessionId || '').trim();
+      const materialId = String(body.materialId || '').trim();
+      if (!sessionId) throw E.validation('缺少会话编号 sessionId。');
+      if (!materialId) throw E.validation('缺少要切换的素材 ID。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', note: '演示环境：切换未发给平台。' });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiPlaySwitch(sessionId, materialId);
+      return ok(res, { ok: true, mode: 'real' });
+    }
+    if (p === '/api/live/multi/status' && m === 'GET') {
+      guard(ctx, 'live-multi', 'live.multi.status');
+      const sessionId = String(sp.get('sessionId') || '').trim();
+      if (!sessionId) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { mode: 'mock', status: { sessionId, state: '直播中（样例）' }, note: '演示环境：状态为样例。' });
+      const data = await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiChannelStatus(sessionId);
+      return ok(res, { mode: 'real', status: data });
+    }
+    if (p === '/api/live/multi/close' && m === 'POST') {
+      guard(ctx, 'live-multi', 'live.multi.close');
+      const { sessionId } = await readBody(req);
+      if (!String(sessionId || '').trim()) throw E.validation('缺少会话编号 sessionId。');
+      if (mode !== 'real') return ok(res, { ok: true, mode: 'mock', note: '演示环境：没有真实直播间可关闭。' });
+      await runtimeFor(ctx.access.vendorId, ctx.access.canBill).client.multiChannelClose(String(sessionId).trim());
+      const info = closeLiveSession(String(sessionId).trim(), '手动关闭');
+      return ok(res, { ok: true, mode: 'real', endedAt: info?.endedAt || Date.now(), durationSec: info?.durationSec ?? null });
+    }
+
+    // ---- 账单：9 页签 + 日期范围；本地导出 CSV（真下载）；发送邮箱走 mailto（前端），本站不代发 ----
+    if (p === '/api/bill' && m === 'GET') return ok(res, await queryBill(ctx, mode, sp));
+    if (p === '/api/bill.csv' && m === 'GET') return sendBillCsv(res, await queryBill(ctx, mode, sp));
+
+    // ---- 互动直播脚本库（本站存储）与直播会话列表（tasks 表） ----
+    if (p === '/api/live-scripts' && m === 'GET') {
+      guard(ctx, 'live-script', 'live.scripts.list');
+      const rows = db.prepare('SELECT id, name, source, created_at, updated_at FROM live_scripts WHERE workspace = ? ORDER BY created_at DESC').all(ws);
+      return ok(res, { scripts: rows.map((r) => ({ id: r.id, name: r.name, source: r.source, createdAt: r.created_at, updatedAt: r.updated_at })) });
+    }
+    if (p === '/api/live-scripts' && m === 'POST') {
+      guard(ctx, 'live-script', 'live.scripts.create');
+      const body = await readBody(req);
+      const name = String(body.name || '').trim().slice(0, 64) || '未命名脚本';
+      const raw = typeof body.scriptJson === 'string' ? body.scriptJson : JSON.stringify(body.scriptJson ?? body.script ?? '');
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { throw E.validation('脚本内容不是合法的 JSON。'); }
+      if (!parsed || typeof parsed !== 'object' || !parsed.sceneList) throw E.validation('这个 JSON 不是直播脚本（缺少 sceneList）。');
+      const id = randomId('ls');
+      const now = Date.now();
+      db.prepare('INSERT INTO live_scripts (id, workspace, name, script_json, source, created_at, updated_at) VALUES (?,?,?,?,?,?,?)')
+        .run(id, ws, name, JSON.stringify(parsed), String(body.source || 'editor').slice(0, 20), now, now);
+      return ok(res, { script: { id, name, source: String(body.source || 'editor'), createdAt: now, updatedAt: now } });
+    }
+    if (p.startsWith('/api/live-scripts/') && (m === 'GET' || m === 'PATCH' || m === 'DELETE')) {
+      guard(ctx, 'live-script', 'live.scripts.item');
+      const id = decodeURIComponent(p.slice('/api/live-scripts/'.length).split('/')[0]);
+      const row = db.prepare('SELECT * FROM live_scripts WHERE id = ? AND workspace = ?').get(id, ws);
+      if (!row) throw E.notFound('找不到这个脚本。', '脚本可能已被删除。');
+      if (m === 'GET') return ok(res, { script: { id: row.id, name: row.name, source: row.source, scriptJson: row.script_json, createdAt: row.created_at, updatedAt: row.updated_at } });
+      if (m === 'PATCH') {
+        const body = await readBody(req);
+        const name = String(body.name || '').trim().slice(0, 64);
+        if (!name) throw E.validation('脚本名称不能为空。');
+        db.prepare('UPDATE live_scripts SET name = ?, updated_at = ? WHERE id = ?').run(name, Date.now(), id);
+        return ok(res, { script: { id, name, source: row.source, createdAt: row.created_at, updatedAt: Date.now() } });
+      }
+      db.prepare('DELETE FROM live_scripts WHERE id = ?').run(id);
+      return ok(res, { ok: true });
+    }
+    if (p === '/api/live-sessions' && m === 'GET') {
+      guard(ctx, 'live-script', 'live.sessions.list');
+      const rows = db.prepare(`SELECT * FROM tasks WHERE workspace = ? AND capability IN ('live-script','live-pro','live-multi') ORDER BY created_at DESC LIMIT 100`).all(ws);
+      return ok(res, { sessions: rows.map(publicLiveSession), note: '平台没有直播会话列表接口，这里只列本站创建过的直播会话。' });
+    }
+
+    throw fail('API_NOT_FOUND', '接口不存在。');
+  }
+
   /* ---------- 路由：工作台能力 ---------- */
   async function workspaceRoutes(req, res, p, url, ctx) {
     const m = req.method;
@@ -994,6 +1403,11 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
       }
       res.end();
       return;
+    }
+
+    // 直播内测 / 视频互动直播测试 / 账单 / 直播脚本库
+    if (p === '/api/live/takeover-ws' || p.startsWith('/api/live/') || p.startsWith('/api/bill') || p.startsWith('/api/live-scripts') || p === '/api/live-sessions') {
+      return liveRoutes(req, res, p, url, ctx);
     }
 
     throw fail('API_NOT_FOUND', '接口不存在。');

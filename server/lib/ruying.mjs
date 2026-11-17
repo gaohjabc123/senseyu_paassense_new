@@ -51,6 +51,19 @@ export const PLATFORM = {
   multiChannelStart: { path: '/api/2dvh/v1/multi-video-live/channel/start' },
   multiHeartbeat: { path: '/api/2dvh/v1/live/video-interactive/channel/heartbeat' },
   multiChannelClose: { path: '/api/2dvh/v1/live/video-interactive/channel/close' },
+  // 以下为 2.16.0 新增（直播内测 / 互动直播测试 / 超级直播间控制 / 账单 / Qid 查询）：
+  // 接口口径以 2026-11-17 飞书文档核查为准（文档 V1.5.2，2026-10-27）
+  liveClose: { path: '/api/2dvh/v1/material/live/channel/close' },
+  superProControl: { path: '/api/2dvh/v1/material/live/super/pro/channel/control' },
+  multiCommandQueue: { path: '/api/2dvh/v1/live/video-interactive/channel/command/queue' },
+  multiQueueList: { path: '/api/2dvh/v1/live/video-interactive/channel/command/queue/list' },
+  multiPlaybackBase: { path: '/api/2dvh/v1/multi-video-live/channel' },
+  multiChannelBase: { path: '/api/2dvh/v1/live/video-interactive/channel' },
+  decorationTaskList: { path: '/api/2dvh/v1/multi-video-live/decoration-tasks/list' },
+  transitionTaskList: { path: '/api/2dvh/v1/multi-video-live/transition-transcode-tasks/list' },
+  billList: { path: '/api/assist/bill/list' },
+  billVoiceList: { path: '/api/assist/bill/voice/list' },
+  qidDetail: { path: '/api/voice/v3/tts/qid' },
 };
 
 /** duration 规整：整数秒、至少 5 秒 */
@@ -224,6 +237,31 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
     }
   }
 
+  /** PUT（播放列表全量重排用；与 post 同款错误处理） */
+  async function put(apiPath, payload, { billable = false } = {}) {
+    if ((billable || isBillable(apiPath)) && !cfg.allowBillable) throw E.billingGuard();
+    try {
+      return await tokens.withToken(async (token) => {
+        let resp;
+        try {
+          resp = await fetchImpl(`${cfg.baseUrl}${apiPath}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(cfg.requestTimeoutMs || 20000),
+          });
+        } catch (e) { throw toAppError(e); }
+        const text = await resp.text();
+        let j = null; try { j = text ? JSON.parse(text) : null; } catch { /* 非 JSON */ }
+        if (!resp.ok || !j || j.code !== 0) throw new PlatformError(resp.status, j?.code, j?.message);
+        return j.data;
+      }, { invalidCodes });
+    } catch (e) {
+      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`);
+      throw toAppError(e);
+    }
+  }
+
   // 发音人列表缓存（每个客户端一份，10 分钟有效）
   let voiceListCache = null;
   // 公共形象列表缓存（每个客户端一份，10 分钟有效）
@@ -379,6 +417,63 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
     },
     async liveHeartbeat(sessionId) {
       return post(PLATFORM.liveHeartbeat.path, { sessionId }, { billable: false });
+    },
+
+    /** 直播：关闭直播间（只传 sessionId；不用时须调，否则占用路数；10 分钟无心跳自动断播） */
+    async liveClose(sessionId) {
+      return post(PLATFORM.liveClose.path, { sessionId }, { billable: false });
+    },
+
+    /** 超级直播间 Pro：接管控制（切换数字人 / 前景 / 背景；param 为 JSON 串；只表示接收成功） */
+    async superProControl(sessionId, param) {
+      return post(PLATFORM.superProControl.path, { sessionId, param: JSON.stringify(param) }, { billable: false });
+    },
+
+    /** 视频互动直播：接管入队（type 0 语音播报 / 1 语音输入 / 2 接管脚本；commandTraceId 幂等） */
+    async multiCommandQueue(body) {
+      return post(PLATFORM.multiCommandQueue.path, body, { billable: false });
+    },
+    async multiQueueList(sessionId) {
+      return get(`${PLATFORM.multiQueueList.path}?sessionId=${encodeURIComponent(sessionId)}`);
+    },
+    /** 视频互动直播：播放顺序查询 / 全量重排 / 切换当前素材 */
+    async multiPlayback(sessionId) {
+      return get(`${PLATFORM.multiPlaybackBase.path}/${encodeURIComponent(sessionId)}/playback`);
+    },
+    async multiPlayMaterials(sessionId, materialIds) {
+      return put(`${PLATFORM.multiPlaybackBase.path}/${encodeURIComponent(sessionId)}/play-materials`, materialIds, { billable: false });
+    },
+    async multiPlaySwitch(sessionId, materialId) {
+      return post(`${PLATFORM.multiPlaybackBase.path}/${encodeURIComponent(sessionId)}/play-materials/switch`, { materialId }, { billable: false });
+    },
+    /** 视频互动直播：直播间状态 / 运行中列表 / 历史列表 / 装修与过渡素材状态 */
+    async multiChannelStatus(sessionId) {
+      return get(`${PLATFORM.multiChannelBase.path}/${encodeURIComponent(sessionId)}`);
+    },
+    async multiRunning() {
+      return get(`${PLATFORM.multiChannelBase.path}/running`);
+    },
+    async multiHistory() {
+      return get(`${PLATFORM.multiChannelBase.path}/history`);
+    },
+    async decorationTaskList(taskIds) {
+      return post(PLATFORM.decorationTaskList.path, { taskIds }, { billable: false });
+    },
+    async transitionTaskList(taskIds) {
+      return post(PLATFORM.transitionTaskList.path, { taskIds }, { billable: false });
+    },
+
+    /** 账单：非语音任务明细 / 语音按日按月统计（只读查询，不扣额度） */
+    async billList(body) {
+      return post(PLATFORM.billList.path, body, { billable: false });
+    },
+    async billVoiceList(body) {
+      return post(PLATFORM.billVoiceList.path, body, { billable: false });
+    },
+
+    /** Qid 查询：发音人详情（是否支持调音调/语速/音量、音素、字幕、USSML 标签、支持语言） */
+    async qidDetail(qid) {
+      return get(`${PLATFORM.qidDetail.path}/${encodeURIComponent(qid)}`);
     },
 
     /** 直播接管：把一段文案推给数字人播报，返回 {isSuccess, commandTraceId} */

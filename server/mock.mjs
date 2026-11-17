@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { capById } from '../src/lib/capabilities.js';
 import { E } from './lib/errors.mjs';
-import { buildVideoCreateParam } from './lib/realcap.mjs';
+import { buildVideoCreateParam, buildLiveScriptParam } from './lib/realcap.mjs';
 import { TASK_STATUS_TEXT } from './lib/ruying.mjs';
 
 const ASSETS = path.resolve(import.meta.dirname, 'mock', 'assets');
@@ -25,6 +25,15 @@ export function createMock({ taskMs = 1400 } = {}) {
         if (cap.id === 'video-script') {
           // 演示环境也按表单实时出 param（与真实环境同一份 buildVideoCreateParam，只填占位形象）
           const param = JSON.parse(buildVideoCreateParam({
+            ...params,
+            faceFeatureId: String(params.faceFeatureId || '').trim() || 'your_face_feature_id',
+            modelUrl: String(params.modelUrl || '').trim() || 'https://example.com/avatar.zip',
+          }, { qid: String(params.qidInput || '').trim() || String(params.qid || '').trim(), avatarId: params.avatarId || null, avatarName: params.avatarName || '' }).param);
+          return { ...base, json: param, jsonText: JSON.stringify(param, null, 2) };
+        }
+        if (cap.id === 'live-script') {
+          // 演示环境也按表单实时出直播脚本（与真实环境同一份 buildLiveScriptParam，只填占位形象）
+          const param = JSON.parse(buildLiveScriptParam({
             ...params,
             faceFeatureId: String(params.faceFeatureId || '').trim() || 'your_face_feature_id',
             modelUrl: String(params.modelUrl || '').trim() || 'https://example.com/avatar.zip',
