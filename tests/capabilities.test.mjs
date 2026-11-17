@@ -182,7 +182,7 @@ test('语音合成 TTS：渲染出发音人下拉、三个滑块与 2000 字上�
   assert.ok(experienceView(s2, cap).includes('正在加载发音人列表'), '列表未加载时须显示占位');
 });
 
-test('视频脚本编辑：系统形象选择器（点选填入编号与模型地址）', async () => {
+test('视频脚本编辑：系统形象选择器（下拉滚动选中，填入编号与模型地址）', async () => {
   const { experienceView } = await import('../src/lib/experience.js');
   const cap = capById('video-script');
   assert.ok(cap, '找不到 video-script');
@@ -198,12 +198,15 @@ test('视频脚本编辑：系统形象选择器（点选填入编号与模型�
   ];
   const s = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, avatarOptions: avatars };
   const html = experienceView(s, cap);
-  for (const needle of ['系统形象', '子沫_校园_站姿', '杜老师-交互数字人', 'data-action="exp-pick-avatar"', 'data-face="ff-zimo"', 'data-url="https://cdn.invalid/a.zip"', 'https://cdn.invalid/a.png']) {
+  for (const needle of ['系统形象', '子沫_校园_站姿', '杜老师-交互数字人', '<select', 'data-field="avatar"', 'value="ff-zimo"', 'value="ff-du"', '请选择系统形象（共 2 个）']) {
     assert.ok(html.includes(needle), `渲染缺失：${needle}`);
   }
-  // 已选形象高亮
+  assert.ok(!html.includes('avatar-pick'), '下拉版不得再渲染缩略图网格');
+  // 已选形象：下拉选中对应项，并显示所选形象缩略图
   const s2 = { ...s, exp: { running: false, params: { faceFeatureId: 'ff-du' }, error: null, result: null } };
-  assert.ok(experienceView(s2, cap).includes('avatar-pick--selected'), '已选形象须高亮');
+  const html2 = experienceView(s2, cap);
+  assert.ok(html2.includes('<option value="ff-du" selected>'), '已选形象须在下拉中选中');
+  assert.ok(html2.includes('avatar-selected') && html2.includes('https://cdn.invalid/b.png'), '已选形象须显示缩略图');
   // 列表未加载时显示占位，不空着
   const s3 = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, avatarOptions: null };
   assert.ok(experienceView(s3, cap).includes('正在加载系统形象列表'), '列表未加载时须显示占位');

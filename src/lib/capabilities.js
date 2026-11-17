@@ -85,7 +85,7 @@ export const CAPABILITIES = [
         { key: 'lines', label: '台词内容', type: 'textarea', default: '大家好，欢迎来到本章课程。', hint: '提交到平台生成时，台词至少 10 个字' },
         { key: 'subtitle', label: '字幕样式', type: 'select', default: '底部白字', options: [['底部白字', '底部白字'], ['无字幕', '无字幕'], ['顶部标题', '顶部标题']] },
         { key: 'videoName', label: '视频名称（提交生成时用）', type: 'text', default: '第3章-高级效果', hint: '只传台词不提交时可留空' },
-        { key: 'avatar', label: '系统形象（点选）', type: 'avatarPicker', optionsFrom: 'avatarList', hint: '平台公共形象（60 个）；点一个自动填入下面的编号与模型地址，也可直接填自己训好的形象' },
+        { key: 'avatar', label: '系统形象（下拉选择）', type: 'avatarPicker', optionsFrom: 'avatarList', hint: '平台公共形象（真实环境 60 个，演示环境 8 个样例）；下拉选择，自动填入下面的编号与模型地址，也可直接填自己训好的形象' },
         { key: 'faceFeatureId', label: '形象 face_feature_id（提交生成时用）', type: 'text', default: '', placeholder: '训练完成后在平台控制台查看', hint: '点上方系统形象自动填入；服务端已配置时留空即可；填自己训好的形象可覆盖' },
         { key: 'modelUrl', label: '形象 zip 包地址（提交生成时用）', type: 'text', default: '', placeholder: 'https://…/avatar.zip', hint: '点上方系统形象自动填入；服务端已配置时留空即可；否则在平台控制台的形象详情里复制模型文件地址' },
       ],

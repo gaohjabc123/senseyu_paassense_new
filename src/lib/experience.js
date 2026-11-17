@@ -76,18 +76,16 @@ export function experienceView(s, cap, opts = {}) {
         : [['', '默认音色（晓悦）'], ...s.voiceOptions.map((v) => [v.qid, v.materialName || v.voiceName || v.qid])];
     }
     if (f.type === 'avatarPicker') {
-      // 系统形象选择器（对齐如影控制台“人物选择”）：缩略图网格，点一个填入下面的编号与模型地址
+      // 系统形象选择器（下拉选择，滚动条翻 60 个）：选一个自动填入下面的编号与模型地址，并显示所选形象缩略图
       const avatars = s.avatarOptions;
       const selected = String(e.params.faceFeatureId || '');
+      const picked = (avatars || []).find((a) => String(a.faceFeatureId || '') === selected);
       if (!avatars) {
         control = `<div class="avatar-picker__empty">正在加载系统形象列表…</div>`;
       } else if (!avatars.length) {
         control = `<div class="avatar-picker__empty">系统形象列表为空或加载失败，可直接在下方填写编号与模型地址。</div>`;
       } else {
-        control = `<div class="avatar-picker" role="group" aria-label="系统形象">${avatars.map((a) => {
-          const on = !!selected && !!a.faceFeatureId && String(a.faceFeatureId) === selected;
-          return `<button type="button" class="avatar-pick${on ? ' avatar-pick--selected' : ''}" data-action="exp-pick-avatar" data-face="${esc(a.faceFeatureId || '')}" data-url="${esc(a.pkgUrl || '')}" data-name="${esc(a.name || '')}" aria-pressed="${on ? 'true' : 'false'}" ${busy ? 'disabled' : ''}><img src="${esc(a.thumbnailUrl || '')}" alt="${esc(a.name || '系统形象')}" loading="lazy" />${esc(a.name || '')}</button>`;
-        }).join('')}</div>`;
+        control = `<select ${common} class="input exp-input"><option value="">请选择系统形象（共 ${avatars.length} 个）</option>${avatars.map((a) => `<option value="${esc(a.faceFeatureId || '')}" ${String(a.faceFeatureId || '') === selected ? 'selected' : ''}>${esc(a.name || '')}${a.avatarType === 3 ? '（互动）' : a.avatarType === 4 ? '（动作编辑）' : ''}</option>`).join('')}</select>${picked ? `<span class="avatar-selected"><img src="${esc(picked.thumbnailUrl || '')}" alt="${esc(picked.name || '已选形象')}" /><span>已选：${esc(picked.name || '')}</span></span>` : ''}`;
       }
     } else if (f.type === 'images') {
       // 多图上传（对齐如影「图片编辑信息」弹窗）：上传框 + 缩略图 + 地址框。

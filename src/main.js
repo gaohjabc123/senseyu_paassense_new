@@ -840,12 +840,6 @@ const actions = {
     if (!field || !value) return;
     state.exp.params[field] = value; render(); toast('已填入默认形象图');
   },
-  'exp-pick-avatar': (el) => {
-    const face = el.dataset.face || ''; const url = el.dataset.url || ''; const name = el.dataset.name || '';
-    if (!face || !url) return;
-    state.exp.params.faceFeatureId = face; state.exp.params.modelUrl = url; render();
-    toast(name ? `已选形象 ${name}，编号与模型地址已填入` : '已填入形象编号与模型地址');
-  },
   'exp-next': (el) => {
     const step = (NEXT_STEPS[state.exp.capId] || []).find((x) => x.cap === el.dataset.cap);
     if (!step) return;
@@ -952,6 +946,11 @@ document.addEventListener('input', (ev) => {
       if (label) label.textContent = el.checked ? on : off;
     } else {
       state.exp.params[el.dataset.field] = el.value;
+    }
+    // 系统形象下拉：选一个自动填入编号与模型地址，并重渲染（填文本框、显示所选缩略图）
+    if (el.dataset.field === 'avatar') {
+      const picked = (state.avatarOptions || []).find((a) => String(a.faceFeatureId || '') === String(el.value || ''));
+      if (picked) { state.exp.params.faceFeatureId = picked.faceFeatureId; state.exp.params.modelUrl = picked.pkgUrl || ''; render(); toast(`已选形象 ${picked.name || ''}，编号与模型地址已填入`); }
     }
   }
 });
