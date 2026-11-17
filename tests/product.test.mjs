@@ -166,3 +166,100 @@ test('创作中心在工作台区：总览之后，产品区只剩对外介绍',
   assert.equal(navById('create').section, 'console', '创作中心的导航分组应是工作台');
   assert.ok(!SITE_VIEWS.includes('capabilities'), '能力矩阵不再是独立站内页');
 });
+
+test('录音同意：首次弹说明、同意后记住、拒绝不记、撤回后重问', async () => {
+  const { createConsent, CONSENT_KEY, CONSENT_TEXT } = await import('../src/lib/consent.js');
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  let confirmCalls = 0;
+  let lastText = '';
+  const c = createConsent({ storage, confirm: async (t) => { confirmCalls += 1; lastText = t; return true; } });
+  assert.equal(c.granted(), false);
+  assert.equal(await c.ensure(), true);
+  assert.equal(confirmCalls, 1);
+  assert.equal(lastText, CONSENT_TEXT, '默认用直播接管口径的说明');
+  assert.match(CONSENT_TEXT, /实时发送到如影直播间/);
+  assert.match(CONSENT_TEXT, /不保存这段录音/);
+  assert.match(CONSENT_TEXT, /不要说出姓名、电话/);
+  assert.equal(storage.getItem(CONSENT_KEY), 'yes');
+  assert.equal(await c.ensure(), true);
+  assert.equal(confirmCalls, 1, '已同意直接放行，不再弹窗');
+  c.revoke();
+  assert.equal(c.granted(), false);
+  assert.equal(await c.ensure(), true);
+  assert.equal(confirmCalls, 2, '撤回后下次再问');
+  const c2 = createConsent({ storage, confirm: async () => false });
+  c2.revoke();
+  assert.equal(await c2.ensure(), false);
+  assert.equal(storage.getItem(CONSENT_KEY), null, '拒绝不记');
+});
+
+test('录音说明对话框：直播接管口径，默认焦点在取消', async () => {
+  const { consentDialogHtml } = await import('../src/lib/consent.js');
+  const html = consentDialogHtml('麦克风接管说明（请先阅读）', ['· 点“确定”后，页面会打开麦克风，把你的声音实时发送到如影直播间，由数字人替你说话。']);
+  assert.match(html, /实时发送到如影直播间/);
+  assert.match(html, /data-action="consent-no" data-autofocus/);
+  assert.match(html, /data-action="consent-yes"/);
+  assert.match(html, /role="dialog"/);
+});
+
+test('等待提示：1.2s / 5s / 12s 三档，按已等待时长取当前档', async () => {
+  const { WAIT_TIPS, waitTipFor, createWaitTips } = await import('../src/lib/guide.js');
+  assert.deepEqual(WAIT_TIPS.map((w) => w.afterMs), [1200, 5000, 12000]);
+  assert.equal(waitTipFor(0), '');
+  assert.equal(waitTipFor(1199), '');
+  assert.equal(waitTipFor(1200), WAIT_TIPS[0].text);
+  assert.equal(waitTipFor(5000), WAIT_TIPS[1].text);
+  assert.equal(waitTipFor(12000), WAIT_TIPS[2].text);
+  assert.equal(waitTipFor(60000), WAIT_TIPS[2].text);
+  assert.ok(!WAIT_TIPS.some((w) => w.text.includes('小禾')), '文案不带课程助手名');
+  const seen = [];
+  const tips = createWaitTips((t) => seen.push(t), [{ afterMs: 10, text: 'a' }, { afterMs: 40, text: 'b' }]);
+  tips.start();
+  await new Promise((r) => setTimeout(r, 25));
+  tips.stop();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(seen, ['a'], 'stop() 取消未到的档位');
+});
+
+test('作品下载文件名：作品名_任务 id，非法字符清洗；无任务 id 时只用作品名', async () => {
+  const { fileNameOf, downloadName, extOfUrl } = await import('../src/lib/works.js');
+  assert.equal(fileNameOf({ name: '视频口播', id: '7023071' }), '视频口播_7023071.mp4');
+  assert.equal(fileNameOf({ name: '我的/视频:测试', id: 't1' }, 'mp3'), '我的_视频_测试_t1.mp3');
+  assert.equal(downloadName({ title: '视频口播', taskId: '7023071' }, 'https://cdn.invalid/x.mp4', 'mp4'), '视频口播_7023071.mp4');
+  assert.equal(downloadName({ title: '语音合成', taskId: '' }, 'https://cdn.invalid/a.mp3', 'mp3'), '语音合成.mp3');
+  assert.equal(downloadName({ title: '作品', id: 'w_abc' }, 'https://cdn.invalid/a.png', 'mp4'), '作品_w_abc.png', '老作品无 taskId 时回落到作品 id');
+  assert.equal(extOfUrl('https://cdn.invalid/a.mp4?token=1', 'mp4'), 'mp4');
+  assert.equal(extOfUrl('https://cdn.invalid/a', 'mp3'), 'mp3');
+});
+
+test('作品过期提醒：2 天内过期的本机作品才进列表', async () => {
+  const { addWork, expiringSoon, clearWorks, listWorks } = await import('../src/lib/works.js');
+  const now = Date.now();
+  try {
+    clearWorks();
+    addWork({ kind: 'video', type: '视频口播', title: '快过期', url: 'https://cdn.invalid/1.mp4' }, now - 6 * 86400000);
+    addWork({ kind: 'video', type: '视频口播', title: '还早', url: 'https://cdn.invalid/2.mp4' }, now);
+    assert.equal(listWorks(now).length, 2);
+    const soon = expiringSoon(now);
+    assert.equal(soon.length, 1);
+    assert.equal(soon[0].title, '快过期');
+    assert.equal(soon[0].days, 1);
+  } finally { clearWorks(); }
+});
+
+test('绿幕字段：低阈值与幕布颜色字段在，blur 提示写明口径不一', () => {
+  const cap = capById('avatar-green');
+  const fields = cap.experience.fields;
+  assert.ok(fields.some((f) => f.key === 'lowThreshold'));
+  assert.equal(fields.find((f) => f.key === 'lowThreshold').default, '40');
+  assert.ok(fields.some((f) => f.key === 'screen'));
+  assert.equal(fields.find((f) => f.key === 'screen').default, 'green');
+  assert.match(fields.find((f) => f.key === 'blur').hint, /奇数/);
+});
+
+test('视频脚本图层提示：写明不要填 2 或 3', () => {
+  const cap = capById('video-script');
+  const f = cap.experience.fields.find((x) => x.key === 'roleLayer');
+  assert.match(f.hint, /不要填 2 或 3/);
+});

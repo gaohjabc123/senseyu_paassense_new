@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { startServer, pollUntilDone, KB_TEXT } from './helpers.mjs';
+import { pollTask, nextPollWait, estimateProgress } from '../src/lib/api.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 let s;
@@ -86,7 +87,7 @@ test('视频口播链路：TTS → 图片数字人 → 任务 1→5，素材为�
   assert.equal(c.code, 0);
   const first = await s.post('/api/task', { id: c.data.taskId });
   assert.equal(first.data.status, 1);
-  assert.ok(first.data.statusText.includes('未开始'));
+  assert.ok(first.data.statusText.includes('排队中'));
   const t = await pollUntilDone(s, '/api/task', c.data.taskId);
   assert.equal(t.data.status, 5);
   assert.match(t.data.result.videoUrl, /^files\//);
@@ -145,4 +146,33 @@ test('静态资源：带哈希资源长缓存、首页不缓存、SPA 回退、�
   assert.equal((await fetch(s.base + '/some/deep/link')).status, 200);
   assert.equal((await fetch(s.base + '/assets/missing.js')).status, 404);
   assert.notEqual((await fetch(s.base + '/files/..%2f..%2fpackage.json')).status, 200);
+});
+
+test('pollTask：任务已取消（status 3）立即抛“任务已取消”，action 为 fix', async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ code: 0, data: { status: 3, statusText: '已取消' } }), { headers: { 'Content-Type': 'application/json' } });
+  try {
+    await assert.rejects(pollTask('t-3', { mode: 'mock' }), (e) => e.message === '任务已取消。' && e.action === 'fix');
+  } finally { globalThis.fetch = origFetch; }
+});
+
+test('轮询退避：真实环境 3000 起步 ×1.5，上限 10000；演示模式固定 400', () => {
+  assert.equal(nextPollWait(3000, true), 4500);
+  assert.equal(nextPollWait(4500, true), 6750);
+  assert.equal(nextPollWait(6750, true), 10000);
+  assert.equal(nextPollWait(10000, true), 10000);
+  assert.equal(nextPollWait(400, false), 400);
+});
+
+test('进度估算：完成 100%、取消/异常 0%、排队 10%、生成中按等待时间逼近 90%', () => {
+  assert.equal(estimateProgress(5, 0), 100);
+  assert.equal(estimateProgress(3, 99999), 0);
+  assert.equal(estimateProgress(9, 99999), 0);
+  assert.equal(estimateProgress(0, 0), 10);
+  assert.equal(estimateProgress(1, 30000), 10);
+  assert.equal(estimateProgress(2, 0), 10);
+  assert.equal(estimateProgress(2, 30000), 50, '30 秒 / 默认 60 秒预期 → 10+40');
+  assert.equal(estimateProgress(2, 60000), 90);
+  assert.equal(estimateProgress(2, 300000), 90, '上限 90');
+  assert.equal(estimateProgress(2, 45000, 90000), 50, '真实环境预期 90 秒');
 });

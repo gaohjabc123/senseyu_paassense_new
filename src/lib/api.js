@@ -243,6 +243,20 @@ export const api = {
   },
 };
 
+/** 轮询等待退避：真实环境 3000 起步 ×1.5，上限 10000；演示模式固定 400ms 不动 */
+export function nextPollWait(wait, real) {
+  return real ? Math.min(10000, Math.round(wait * 1.5)) : 400;
+}
+
+/** 阶段式进度估算（课程 ch3 task.js estimateProgress 原文；平台没有百分比，只有状态 0/1/2/3/5/9）：
+ * 完成 100%，已取消/异常 0%，未开始/排队中 10%，生成中按已等待时间逼近 90% */
+export function estimateProgress(status, elapsedMs, expectMs = 60000) {
+  if (status === 5) return 100;
+  if (status === 3 || status === 9) return 0;
+  if (status === 0 || status === 1) return 10;
+  return Math.min(90, 10 + Math.round((80 * elapsedMs) / expectMs));
+}
+
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const t = setTimeout(resolve, ms);
   signal?.addEventListener('abort', () => { clearTimeout(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
@@ -256,7 +270,7 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
  */
 export async function pollTask(taskId, { endpoint = 'task', mode = getMode(), onProgress, signal, startedAt = Date.now() } = {}) {
   const real = mode === 'real';
-  const interval = real ? 3000 : 400;
+  let wait = real ? 3000 : 400; // 真实环境从 3 秒起指数退避（×1.5，上限 10 秒）；演示模式固定 400ms 不动
   const queueNoticeMs = real ? 45000 : 8000;
   const maxWaitMs = real ? 15 * 60000 : 60000;
   let misses = 0;
@@ -268,13 +282,14 @@ export async function pollTask(taskId, { endpoint = 'task', mode = getMode(), on
     } catch (e) {
       if (e?.name === 'AbortError') throw e;
       const err = toApiError(e);
-      if (['NETWORK', 'TIMEOUT'].includes(err.code) && ++misses < 3) { await sleep(interval * 2, signal); continue; }
+      if (['NETWORK', 'TIMEOUT'].includes(err.code) && ++misses < 3) { await sleep(wait * 2, signal); continue; }
       throw err;
     }
     const elapsed = Date.now() - startedAt;
     onProgress?.({ status: t.status, statusText: t.statusText, elapsed, queued: t.status === 1 && elapsed > queueNoticeMs });
     if (t.status === 5 && t.result) return { ...t.result, mode: t.result.mode || t.mode };
     if (t.status === 9) throw new ApiError({ message: '生成失败。', hint: t.failReason ? `平台说明：${t.failReason}。请调整后重新生成。` : '平台没有给出原因，请重新生成；多次失败请联系对接人。', action: 'retry' });
+    if (t.status === 3) throw new ApiError({ message: '任务已取消。', hint: '这个任务已在平台取消，不会再继续生成；可以重新提交一次。', action: 'fix' });
     if (elapsed > maxWaitMs) {
       throw new ApiError({
         message: t.status === 1 ? '任务一直在平台排队，还没有开始生成。' : '任务生成时间比预期长。',
@@ -282,7 +297,8 @@ export async function pollTask(taskId, { endpoint = 'task', mode = getMode(), on
         action: 'resume', taskId,
       });
     }
-    await sleep(interval, signal);
+    await sleep(wait, signal);
+    wait = nextPollWait(wait, real);
   }
 }
 

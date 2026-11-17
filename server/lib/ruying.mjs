@@ -12,21 +12,37 @@
 import { isBillable } from './config.mjs';
 import { AppError, E, toAppError } from './errors.mjs';
 
+/**
+ * 上游请求统一带 Accept-Language: zh-CN（2026-11-11 复测：Node 自带 fetch 默认发 "*"，
+ * 平台会把 60112160 等真实错误变成 99999999；显式写 zh-CN 才能看到真实错误码）。
+ */
+/** 本机地址平台下载不到（课程 ch5 asr.js 原文）：localhost / 127. / 10. / 192.168. / 172.16–31.；解析失败返回 false（相对路径 media/xxx 不会被误拦） */
+export function isLocalUrl(url) {
+  try { return /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(new URL(url).hostname); } catch { return false; }
+}
+
+export const UPSTREAM_HEADERS = { 'Accept-Language': 'zh-CN' };
+
 export const PLATFORM = {
   // TTS 三个可调参数与控制台 voiceTest 的三个滑块一一对应：
   //   语速 speed_ratio [0.5,2]（越大越慢，控制台默认 1.25）、音量 volume [1,400]（控制台默认 200.5）、
   //   语调 pitch_offset [-60,60]（控制台默认 0）。只在显式传入时才发，不动老调用（视频口播等）的默认音色。
   ttsRequest: { path: '/api/voice/v3/tts/request', body: (text, qid, opts = {}) => {
+    validateTtsParams(opts);
     const b = { qid, query: text, timeout: 30000 };
     const sr = clampNum(opts.speedRatio, 0.5, 2); if (sr != null) b.speed_ratio = sr;
-    const vol = clampNum(opts.volume, 1, 400); if (vol != null) b.volume = vol;
+    const vol = clampNum(opts.volume, 1, 400); if (vol != null) b.volume = Math.round(vol);
     const po = clampNum(opts.pitchOffset, -60, 60); if (po != null) b.pitch_offset = po;
     return b;
   } },
   ttsResult: { path: '/api/voice/v3/tts/result', body: (requestId) => ({ request_id: requestId }) },
   imageAvatar: {
     path: '/api/2dvh/v1/material/single/image/video/create',
-    body: ({ videoName, imageUrl, audioUrl, duration }) => ({ videoName, param: JSON.stringify({ imageUrl, audioUrl, duration }) }),
+    body: ({ videoName, imageUrl, audioUrl, duration }) => {
+      if (isLocalUrl(imageUrl)) throw E.validation('图片地址是本机地址，平台下载不到，请用本站上传或公网地址。');
+      if (isLocalUrl(audioUrl)) throw E.validation('音频地址是本机地址，平台下载不到，请用本站上传或公网地址。');
+      return { videoName, param: JSON.stringify({ imageUrl, audioUrl, duration }) };
+    },
   },
   taskInfo: { path: '/api/2dvh/v1/task/info', body: (ids) => ({ ids }) },
   // 以下为 2.6.0 真实链路新增：请求体由 server/lib/realcap.mjs 按文档构造
@@ -106,6 +122,21 @@ export function clampNum(v, min, max) {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : null;
 }
 
+/**
+ * 语音合成三滑块显式校验（voice-tts 入口）：越界直接报错，不再静默夹取；
+ * volume 非整数自动取整（平台只收整数）。视频 / 直播脚本类 builder 仍用各自的夹取，不动。
+ */
+export function validateTtsParams(opts = {}) {
+  const check = (v, min, max, name) => {
+    if (v === undefined || v === null || v === '') return;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min || n > max) throw E.validation(`${name} 需在 ${min}~${max} 之间，当前为 ${v}。`, '请把数值改到范围内再提交。');
+  };
+  check(opts.speedRatio, 0.5, 2, '语速 speedRatio');
+  check(opts.pitchOffset, -60, 60, '语调 pitchOffset');
+  check(opts.volume, 1, 400, '音量 volume');
+}
+
 /** 发音人列表项规整：extendParam 是 JSON 串，内含 qid、voiceName、gender */
 export function normalizeVoice(r = {}) {
   let ext = {};
@@ -138,11 +169,24 @@ export function normalizeAppearance(r = {}) {
   };
 }
 
-export const TASK_STATUS_TEXT = { 1: '未开始（平台排队中）', 2: '生成中', 5: '已完成', 9: '失败' };
+/** 语音接口 data.status 状态表（TTS / ASR / 多音字；摘自官方语音“状态表”） */
+export const VOICE_STATUS = {
+  0: '成功', 1000: '处理中',
+  1002: 'TTS 必填参数缺失', 1003: 'TTS 发音人为空', 1004: 'TTS 合成文本为空', 1005: 'TTS 发音人不存在',
+  1102: 'TTS 未连接到服务', 1103: 'TTS 繁忙', 1104: 'TTS 内部错误（2026-11-10 实测 qid 不存在也回 1104）', 1105: 'TTS 请求超时', 1106: 'TTS 未知的 request ID',
+  2001: 'ASR 必填参数缺失', 2002: 'ASR 音频 URL 为空', 2102: 'ASR 未连接到服务', 2103: 'ASR 繁忙',
+  2104: 'ASR 内部错误', 2105: 'ASR 请求超时', 2106: 'ASR 下载音频错误', 2107: 'ASR 未知的 request ID',
+  5002: '多音字必填参数缺失', 5004: '多音字文本为空', 5102: '多音字未连接到服务', 5103: '多音字繁忙', 5104: '多音字内部错误', 5105: '多音字请求超时',
+};
+
+/** 平台任务状态表（0 未开始、1 排队中、2 生成中、3 已取消、5 已完成、9 异常） */
+export const TASK_STATUS_TEXT = { 0: '未开始', 1: '排队中', 2: '生成中', 3: '已取消', 5: '已完成', 9: '异常' };
 
 /** 把平台任务记录规整成前端使用的统一结构 */
 export function normalizeTask(t, fallbackId) {
-  const status = Number(pick(t, ['status', 'taskStatus', 'state'])) || 1;
+  const raw = pick(t, ['status', 'taskStatus', 'state']);
+  const n = Number(raw);
+  const status = raw === undefined ? 1 : (Number.isFinite(n) ? n : 1); // 保留 0（未开始），不能用 || 1（会把 0 吞成 1）
   let product = pick(t, ['productParam', 'product', 'result']);
   if (typeof product === 'string') { try { product = JSON.parse(product); } catch { product = {}; } }
   product = product || {};
@@ -204,7 +248,7 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
         try {
           resp = await fetchImpl(`${cfg.baseUrl}${apiPath}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            headers: { ...UPSTREAM_HEADERS, 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify(payload),
             signal: AbortSignal.timeout(cfg.requestTimeoutMs || 20000),
           });
@@ -215,7 +259,7 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
         return j.data;
       }, { invalidCodes });
     } catch (e) {
-      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`);
+      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`, e.platformCode);
       throw toAppError(e);
     }
   }
@@ -227,7 +271,7 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
         try {
           resp = await fetchImpl(`${cfg.baseUrl}${apiPath}`, {
             method: 'GET',
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { ...UPSTREAM_HEADERS, Authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(cfg.requestTimeoutMs || 20000),
           });
         } catch (e) { throw toAppError(e); }
@@ -237,7 +281,7 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
         return j.data;
       }, { invalidCodes });
     } catch (e) {
-      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`);
+      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`, e.platformCode);
       throw toAppError(e);
     }
   }
@@ -251,7 +295,7 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
         try {
           resp = await fetchImpl(`${cfg.baseUrl}${apiPath}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            headers: { ...UPSTREAM_HEADERS, 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify(payload),
             signal: AbortSignal.timeout(cfg.requestTimeoutMs || 20000),
           });
@@ -262,7 +306,7 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
         return j.data;
       }, { invalidCodes });
     } catch (e) {
-      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`);
+      if (e instanceof PlatformError) throw E.upstream(e.httpStatus || 400, e.platformMessage, `${apiPath} http=${e.httpStatus} code=${e.platformCode}`, e.platformCode);
       throw toAppError(e);
     }
   }
@@ -300,14 +344,16 @@ export function createRuyingClient(cfg, tokens, { fetchImpl = (...a) => fetch(..
       while (Date.now() < until) {
         const r = await post(PLATFORM.ttsResult.path, PLATFORM.ttsResult.body(requestId));
         const result = r?.result || {};
-        const url = result.audio_url || pick(r, ['audioUrl', 'audio_url', 'url', 'fileUrl']);
         const status = Number(pick(r, ['status']));
-        if (url) {
+        // 先判状态：1000 处理中继续等；0 或拿到音频地址即成功；其余失败码立即报错，不等满 60 秒
+        if (status === 1000) { await sleep(intervalMs); continue; }
+        const url = result.audio_url || pick(r, ['audioUrl', 'audio_url', 'url', 'fileUrl']);
+        if (status === 0 || url) {
           const ms = Number(result.duration_ms) || Number(pick(r, ['durationMs', 'duration_ms'])) || (Number(pick(r, ['duration'])) * 1000) || 0;
           return { audio_url: url, duration_ms: ms };
         }
-        if (status === 9 || status === 3) throw E.upstream(400, '配音生成失败', `tts status=${status}`);
-        await sleep(intervalMs);
+        if (Number.isNaN(status)) { await sleep(intervalMs); continue; } // 响应里没有 status：按旧口径继续等，超时再报
+        throw E.upstream(400, `配音生成失败：${VOICE_STATUS[status] || `未知状态 ${status}`}`, `tts status=${status}`);
       }
       throw new AppError({ code: 'TTS_TIMEOUT', message: '配音生成时间过长。', hint: '平台可能在排队，请稍后重试。', action: 'later' });
     },

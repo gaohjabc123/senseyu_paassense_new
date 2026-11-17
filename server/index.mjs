@@ -14,7 +14,7 @@ import { createMock } from './mock.mjs';
 import { getConfig } from './lib/config.mjs';
 import { VERSION } from './lib/version.mjs';
 import { TokenManager } from './lib/token.mjs';
-import { createRuyingClient, normalizeDuration, TASK_STATUS_TEXT } from './lib/ruying.mjs';
+import { createRuyingClient, normalizeDuration, TASK_STATUS_TEXT, isLocalUrl } from './lib/ruying.mjs';
 import { DEMO_AVATARS } from './lib/demo-avatars.mjs';
 import { KbStore } from './lib/kb.mjs';
 import { answerQuestion, completeDeepSeek } from './lib/answer.mjs';
@@ -27,6 +27,7 @@ import { mediaDir, mediaSpec, storeMedia, sweepMedia } from './lib/media.mjs';
 import { createQuota, costOf, METERS } from './lib/quota.mjs';
 import { createTeaching } from './lib/teaching.mjs';
 import { CAPABILITIES, GROUPS, capById, stats, OUTPUT_LABEL } from '../src/lib/capabilities.js';
+import { speakable } from '../src/lib/tts.js';
 
 const PRODUCT_NAME = '如影 AI 能力开放平台';
 const MAX_BODY = 1.5 * 1024 * 1024;
@@ -268,6 +269,9 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
     const module = purpose === 'video' ? SHORTCUT_MODULE.video : SHORTCUT_MODULE.voice;
     guard(ctx, module, purpose === 'video' ? 'video.tts' : 'voice.tts');
     const mode = resolveMode(modeArg);
+    // TTS 前去掉 Markdown/表情等不适合朗读的字符（服务端统一清洗，避免两处口径漂移）；
+    // SSML 文本（含 <speak> 标签）不清洗，两者互斥
+    if (!/<speak[\s>]/.test(text)) text = speakable(text);
     if (words(text) < 4) throw E.validation('文案至少 4 个字，请再写一点。');
     // 上限与控制台 voiceTest 一致：语音合成（测试文本）最多 2000 字；视频口播仍限 200 字（时长与额度口径）
     if (purpose === 'video' ? words(text) > 200 : words(text) > 2000) throw E.validation(purpose === 'video' ? '文案最多 200 个字，请删减后再生成。' : '测试文本最多 2000 个字，请删减后再生成。');
@@ -287,6 +291,7 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         const img = imageUrl || rt.vcfg.avatarImageUrl;
         if (!img) throw fail('AVATAR_NOT_CONFIGURED', '没有可用的数字人形象图片。', ctx.apiKey ? '请在请求里传 imageUrl（可公网访问的人像图片地址）。' : '请在上方填入一张人像图片地址（可公网访问），或请管理员在「厂商凭据」里配置一个默认形象图。', 'config');
         if (imageUrl && !/^https?:\/\//.test(imageUrl)) throw E.validation('imageUrl 需为 http(s) 地址。');
+        if (imageUrl && isLocalUrl(imageUrl)) throw E.validation('图片地址是本机地址，平台下载不到，请用本站上传或公网地址。');
         const taskId = await rt.client.createImageAvatar({ imageUrl: img, audioUrl, duration, videoName: String(name || `口播${String(text).slice(0, 16)}`).slice(0, 40) });
         realTasks.set(taskId, { owner: ctx.access.workspace, vendorId: ctx.access.vendorId, capability: SHORTCUT_MODULE.video, charge });
         recordTask(taskId, ctx.access.workspace, ctx.access.vendorId, SHORTCUT_MODULE.video, String(name || `口播${String(text).slice(0, 16)}`).slice(0, 40), charge);

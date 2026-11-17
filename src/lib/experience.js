@@ -3,6 +3,8 @@ import { groupOf, OUTPUT_LABEL, capById } from './capabilities.js';
 import { esc } from './html.js';
 import { errorBlock } from './views.js';
 import { recentForField } from './recent.js';
+import { estimateProgress } from './api.js';
+import { downloadName } from './works.js';
 
 /** 上传按钮的文件选择器过滤（与服务端 media.mjs 白名单一致；服务端是最终校验） */
 const UPLOAD_ACCEPT = {
@@ -206,7 +208,7 @@ export function experienceView(s, cap, opts = {}) {
     ${manageSection(s, cap)}
     ${busy ? `<div class="card">${progressLine(e)}</div>` : ''}
     ${e.error ? `<div class="card">${errorBlock(e.error, { retry: 'exp-run', resume: 'exp-resume' })}</div>` : ''}
-    ${e.result ? experienceResult(e.result, cap) : ''}`;
+    ${e.result ? experienceResult(e.result, cap, e.taskId || '') : ''}`;
   if (opts.embedded) return body;
   return `<div class="console exp-shell">
     <nav class="exp-crumb" aria-label="位置"><a href="#create" data-view="create">创作中心</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
@@ -215,26 +217,30 @@ export function experienceView(s, cap, opts = {}) {
 }
 
 function progressLine(e) {
-  const s = e.startedAt ? Math.floor((Date.now() - e.startedAt) / 1000) : 0;
+  const elapsedMs = e.startedAt ? Date.now() - e.startedAt : 0;
+  const s = Math.floor(elapsedMs / 1000);
+  // 百分比是估算（平台只给状态不给进度）：完成 100%，排队 10%，生成中按已等待时间逼近 90%
+  const pct = estimateProgress(e.status ?? 1, elapsedMs, e.expectMs || 60000);
   return `<div class="task-progress" role="status" aria-live="polite"><div class="task-progress__head"><span class="spinner" aria-hidden="true"></span>
-    <b>${esc(e.stage || '已提交')}</b><span class="muted" data-elapsed="exp">已等待 ${s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`}</span>
+    <b>${esc(e.stage || '已提交')}</b><span class="muted" data-progress="exp">约 ${pct}%（估算）</span><span class="muted" data-elapsed="exp">已等待 ${s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`}</span>
     ${e.taskId ? '<button class="btn btn--sm btn--ghost" type="button" data-action="exp-stop">停止等待</button>' : ''}</div>
+    <span class="task-progress__tip" data-wait-tip="exp"></span>
     ${e.queued ? '<p class="task-progress__note">平台侧队列可能在排队，任务还没开始生成。可以继续等待，也可以停止后稍后重试。</p>' : ''}</div>`;
 }
 
-export function experienceResult(r, cap) {
+export function experienceResult(r, cap, taskId = '') {
   const out = r.output;
   let body = '';
   const save = '<button class="btn" type="button" data-action="exp-save">保存到作品</button>';
   if (out === 'video') {
     body = `<video controls playsinline preload="metadata" ${r.thumbUrl ? `poster="${esc(r.thumbUrl)}"` : ''} src="${esc(r.videoUrl)}" class="media-video" aria-label="${esc(r.title || '生成的视频')}"></video>
-      <div class="actions"><a class="btn" href="${esc(r.videoUrl)}" download>下载视频</a>${save}</div>`;
+      <div class="actions"><a class="btn" href="${esc(r.videoUrl)}" download="${esc(downloadName({ title: r.title || cap.name, taskId }, r.videoUrl, 'mp4'))}">下载视频</a>${save}</div>`;
   } else if (out === 'audio') {
     body = `<audio controls src="${esc(r.audioUrl)}" class="media-audio" aria-label="${esc(r.title || '生成的音频')}"></audio>
-      <div class="actions"><a class="btn" href="${esc(r.audioUrl)}" download>下载音频</a>${save}</div>`;
+      <div class="actions"><a class="btn" href="${esc(r.audioUrl)}" download="${esc(downloadName({ title: r.title || cap.name, taskId }, r.audioUrl, 'mp3'))}">下载音频</a>${save}</div>`;
   } else if (out === 'image') {
     body = `<img src="${esc(r.imageUrl)}" alt="${esc(r.title || '生成的图片')}（${r.mode === 'real' ? '平台生成' : '演示样例图'}）" class="media-image" />
-      <div class="actions"><a class="btn" href="${esc(r.imageUrl)}" download>下载图片</a>${save}</div>`;
+      <div class="actions"><a class="btn" href="${esc(r.imageUrl)}" download="${esc(downloadName({ title: r.title || cap.name, taskId }, r.imageUrl, 'png'))}">下载图片</a>${save}</div>`;
   } else if (out === 'json') {
     // 音色复刻：真实环境的 QID 可一键复制，并说明怎么用上
     const qidCopy = cap.id === 'voice-clone' && r.mode === 'real' && r.json?.qid

@@ -3,10 +3,11 @@
 // 环境开关只改文字和样式，logo 图片元素永远不会被重建。事件统一委托在 document 上，只绑定一次。
 import './style.css';
 import { PRODUCT, DEFAULT_VIEW, SITE_VIEWS, navById, SHORTCUT_MODULE } from './lib/product.js';
-import { TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone } from './lib/guide.js';
+import { TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone, waitTipFor, createWaitTips } from './lib/guide.js';
 import { validateText, estimateSeconds, stageLabel, EXPERIENCES, expTabCap } from './lib/wizard.js';
-import { api, ApiError, getMode, setMode, pollTask, uploadKb, uploadMedia, chatStream, toApiError } from './lib/api.js';
+import { api, ApiError, getMode, setMode, pollTask, uploadKb, uploadMedia, chatStream, toApiError, estimateProgress } from './lib/api.js';
 import { listWorks, addWork, removeWork, renameWork, clearWorks } from './lib/works.js';
+import { createConsent, consentDialogHtml } from './lib/consent.js';
 import { capById } from './lib/capabilities.js';
 import { words } from './lib/html.js';
 import * as V from './lib/views.js';
@@ -36,7 +37,7 @@ const state = {
   voice: { text: '大家好，欢迎使用如影 AI 能力开放平台。', qid: '', qidInput: '', speed: 1.25, volume: 200.5, pitch: 0, busy: false, error: null, inputError: '', result: null },
   kb: { loaded: false, loading: false, loadError: null, docs: [], uploads: [], dragging: false, deleting: null },
   chat: { messages: [], input: '', streaming: false, abort: null, lastQuestion: '' },
-  exp: { capId: null, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null, transition: freshManage(), warming: freshManage() },
+  exp: { capId: null, params: {}, running: false, stage: '', queued: false, status: null, expectMs: 60000, startedAt: 0, taskId: null, error: null, result: null, abort: null, transition: freshManage(), warming: freshManage() },
   expPrefill: null, // 「下一步」带入的参数：跳到目标能力时一次性填入（applyRoute 里消费）
   recent: loadRecent(), // 上次的结果（本机）：上次合成的音频 / 上次训好的形象 / 上次复刻的 QID
   backStack: [], // 返回栈：走过的页面（本机内存，刷新清空），「返回」按钮按它回上一个页面
@@ -142,6 +143,7 @@ function render() {
   overlayRoot.innerHTML = state.dialog?.type === 'cred' ? credentialDialog(state.dialog)
     : state.dialog?.type === 'mode' ? V.modeDialog(state)
     : state.dialog?.type === 'work' ? V.workDialog(state.dialog.work)
+    : state.dialog?.type === 'consent' ? consentDialogHtml(state.dialog.title, state.dialog.lines)
       : state.tour >= 0 ? V.tourCard(state.tour) : '';
 
   if (focusId) {
@@ -265,7 +267,7 @@ function applyRoute() {
   if (ADMIN_ROUTES[r.view]) admin.enter(r);
   if (r.view === 'experience' && r.capId !== state.exp.capId) {
     state.exp.abort?.abort();
-    state.exp = { capId: r.capId, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null, transition: freshManage(), warming: freshManage() };
+    state.exp = { capId: r.capId, params: {}, running: false, stage: '', queued: false, status: null, expectMs: 60000, startedAt: 0, taskId: null, error: null, result: null, abort: null, transition: freshManage(), warming: freshManage() };
     if (state.expPrefill?.capId === r.capId) { state.exp.params = { ...state.expPrefill.params }; state.expPrefill = null; }
   }
   if (r.view === 'tasks' || r.view === 'overview') reloadWorks().then((changed) => { if (changed && state.view === r.view && !state.dialog) render(); });
@@ -397,11 +399,22 @@ function stopLiveTimers() {
 /** 麦克风接管：浏览器采音 → 重采样 16k 单声道 PCM → WebSocket 上行（文档 V1.5.2 协议）。
  * WS 地址由服务端 /api/live/takeover-ws 给（含 Token），前端不打它的日志、不展示。 */
 let micSession = null;
+/** 麦克风接管前的录音告知：同意只记本次会话（sessionStorage）；对话框走平台 state.dialog 覆盖层，不用 window.confirm */
+let consentResolve = null;
+function showConsentDialog(text) {
+  const [title, ...lines] = String(text).split('\n');
+  state.dialog = { type: 'consent', title, lines };
+  render();
+  return new Promise((resolve) => { consentResolve = resolve; });
+}
+const micConsent = createConsent({ storage: sessionStorage, confirm: showConsentDialog });
 const MIC_DOWN = { 1: '鉴权失败', 2: '等待就绪', 20: '排队完成', 19: '开始播放', 18: '完成', 4: '停止发送', 5: '发送失败', 6: '未就绪，可重试', 99: '结束确认' };
 async function startMic() {
   const t = state.livetest;
   if (micSession || !t.session?.sessionId) return;
   if (state.mode !== 'real') { t.micStatus = '演示环境没有真实直播间，麦克风接管只在真实环境可用。'; return render(); }
+  // 录音前先告知并取得同意：已同意直接放行，拒绝则不打开麦克风（音色复刻的“同意音频”是另一回事，不可混淆）
+  if (!(await micConsent.ensure())) { t.micStatus = '没有同意录音说明，麦克风没有打开；仍可以用文字互动。'; return render(); }
   t.micStatus = '正在连接…'; render();
   let wsUrl;
   try {
@@ -610,12 +623,20 @@ function startTicker() {
   if (startTicker.id) return;
   startTicker.id = setInterval(() => {
     let any = false;
-    for (const [key, st] of [['video', state.video], ['exp', state.exp]]) {
-      const running = key === 'video' ? st.phase !== 'idle' && st.phase !== 'done' : st.running;
+    for (const [key, st] of [['video', state.video], ['exp', state.exp], ['voice', state.voice]]) {
+      const running = key === 'video' ? st.phase !== 'idle' && st.phase !== 'done' : key === 'voice' ? st.busy : st.running;
       if (!running || !st.startedAt) continue;
       any = true;
+      const elapsedMs = Date.now() - st.startedAt;
       const el = viewRoot.querySelector(`[data-elapsed="${key}"]`);
-      if (el) { const s = Math.floor((Date.now() - st.startedAt) / 1000); el.textContent = `已等待 ${s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`}`; }
+      if (el) { const s = Math.floor(elapsedMs / 1000); el.textContent = `已等待 ${s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`}`; }
+      // 等待提示按 1.2s / 5s / 12s 档位走字；通用体验器另有估算百分比（与“已等待 x 秒”并存）
+      const tip = viewRoot.querySelector(`[data-wait-tip="${key}"]`);
+      if (tip) tip.textContent = waitTipFor(elapsedMs);
+      if (key === 'exp') {
+        const pr = viewRoot.querySelector('[data-progress="exp"]');
+        if (pr) pr.textContent = `约 ${estimateProgress(st.status ?? 1, elapsedMs, st.expectMs || 60000)}%（估算）`;
+      }
     }
     // 直播开播时长：开播中且正在看对应页面时才走字
     for (const [kind, st] of [['livetest', state.livetest], ['multitest', state.multitest]]) {
@@ -663,7 +684,7 @@ async function pollVideo() {
       },
     });
     Object.assign(v, { phase: 'done', result, abort: null });
-    const autoSaved = await autoSaveVideo(result, v.text);
+    const autoSaved = await autoSaveVideo(result, v.text, v.taskId);
     renderIf('create', 'video');
     toast(autoSaved ? '视频生成完成，已自动保存到我的作品' : '视频生成完成');
   } catch (e) {
@@ -686,8 +707,8 @@ async function runVoice() {
   if (v.busy) return;
   const check = validateText(v.text, 4, 2000);
   if (!check.ok) { v.inputError = check.message; return render(); }
-  Object.assign(v, { busy: true, inputError: '', error: null, result: null });
-  render();
+  Object.assign(v, { busy: true, inputError: '', error: null, result: null, startedAt: Date.now() });
+  render(); startTicker();
   try { v.result = await api.tts(v.text, 'voice', { qid: (v.qidInput || '').trim() || v.qid || undefined, speedRatio: Number(v.speed ?? 1.25), volume: Number(v.volume ?? 200.5), pitchOffset: Number(v.pitch ?? 0) }); if (state.mode === 'real' && v.result?.audio_url) state.recent = saveRecent({ audioUrl: v.result.audio_url }); } catch (e) { v.error = toApiError(e); }
   v.busy = false; renderIf('create', 'voice');
 }
@@ -768,21 +789,25 @@ async function sendChat(question) {
   if (state.kb.loaded && !state.kb.docs.length) return toast('请先上传资料');
   c.input = ''; c.lastQuestion = q;
   c.messages.push({ role: 'user', text: q });
-  const m = { role: 'assistant', text: '', pending: true, sources: [], notice: '', error: null };
+  const m = { role: 'assistant', text: '', pending: true, sources: [], notice: '', error: null, tip: '' };
   c.messages.push(m);
   c.streaming = true;
   const ctrl = new AbortController(); c.abort = ctrl;
   render();
+  // 等待提示：1.2s / 5s / 12s 三档；收到首字即停，提示消失
+  const tips = createWaitTips((text) => { m.tip = text; renderIf('create', 'chat'); });
+  tips.start();
   try {
     await chatStream(q, {
       signal: ctrl.signal,
       onMeta: (meta) => { m.sources = meta.sources || []; m.notice = meta.notice || ''; renderIf('create', 'chat'); },
-      onDelta: (text) => { m.text = text; renderIf('create', 'chat'); },
+      onDelta: (text) => { tips.stop(); m.tip = ''; m.text = text; renderIf('create', 'chat'); },
     });
   } catch (e) {
     if (e?.name === 'AbortError') m.text += m.text ? '（已停止）' : '已停止回答。';
     else { m.error = toApiError(e); if (e.partial) m.text = e.partial; }
   }
+  tips.stop(); m.tip = '';
   m.pending = false; c.streaming = false; c.abort = null;
   renderIf('create', 'chat');
   document.getElementById('chat-input')?.focus();
@@ -802,7 +827,7 @@ function enterExpTab(tabId) {
   if (!cap) return;
   if (state.exp.capId !== cap) {
     state.exp.abort?.abort();
-    state.exp = { capId: cap, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null };
+    state.exp = { capId: cap, params: {}, running: false, stage: '', queued: false, status: null, expectMs: 60000, startedAt: 0, taskId: null, error: null, result: null, abort: null };
   }
 }
 
@@ -813,7 +838,7 @@ async function runExperience() {
   const e = state.exp;
   const cap = capById(e.capId);
   if (!cap || e.running) return;
-  Object.assign(e, { running: true, stage: '已提交', queued: false, error: null, result: null, taskId: null, startedAt: Date.now() });
+  Object.assign(e, { running: true, stage: '已提交', queued: false, status: null, expectMs: state.mode === 'real' ? 90000 : 4000, error: null, result: null, taskId: null, startedAt: Date.now() });
   render(); startTicker();
   try {
     const r = await api.runCapability(cap.id, collectExpParams());
@@ -840,6 +865,7 @@ async function pollExperience() {
     return await pollTask(e.taskId, {
       endpoint: 'capability/task', mode: state.mode, signal: ctrl.signal, startedAt: e.startedAt,
       onProgress: ({ status, queued }) => {
+        e.status = status;
         const stage = stageLabel(status, queued);
         if (stage !== e.stage || queued !== e.queued) { e.stage = stage; e.queued = queued; if (expVisible()) render(); }
       },
@@ -850,7 +876,7 @@ async function pollExperience() {
 async function resumeExperience() {
   const e = state.exp;
   if (!e.taskId) return runExperience();
-  Object.assign(e, { running: true, error: null, startedAt: Date.now() });
+  Object.assign(e, { running: true, error: null, status: null, expectMs: state.mode === 'real' ? 90000 : 4000, startedAt: Date.now() });
   render(); startTicker();
   try { e.result = await pollExperience(); } catch (err) { e.error = err?.name === 'AbortError' ? null : toApiError(err); }
   e.running = false; rememberResult(e.capId, e.result); if (expVisible()) render();
@@ -864,9 +890,9 @@ function rememberResult(capId, result) {
 
 /** 任务完成自动保存：只存真实环境的媒体结果，演示样例不自动进作品。
  * 返回 true 表示新存了一条；已存在（去重）或不满足条件返回 false。 */
-async function autoSaveVideo(result, text) {
+async function autoSaveVideo(result, text, taskId = '') {
   if (!result || result.mode !== 'real' || !result.videoUrl) return false;
-  const r = await saveWork({ kind: 'video', type: '视频口播', title: String(text || '').slice(0, 20) || '视频口播', url: result.videoUrl, duration: result.duration, mode: result.mode });
+  const r = await saveWork({ kind: 'video', type: '视频口播', title: String(text || '').slice(0, 20) || '视频口播', url: result.videoUrl, duration: result.duration, mode: result.mode, taskId });
   return r.ok && !r.duplicate;
 }
 
@@ -882,6 +908,7 @@ async function autoSaveExperience() {
     kind, type: cap.name, title: r.title || cap.name, mode: r.mode, url,
     text: kind === 'text' ? (r.jsonText || r.text || '') : '',
     duration: r.duration || (r.durationMs ? r.durationMs / 1000 : null),
+    taskId: state.exp.taskId || '',
   });
   return res.ok && !res.duplicate;
 }
@@ -951,6 +978,7 @@ async function saveExperience(btn) {
     url: r.videoUrl || r.audioUrl || r.imageUrl || '',
     text: kind === 'text' ? (r.jsonText || r.text || '') : '',
     duration: r.duration || (r.durationMs ? r.durationMs / 1000 : null),
+    taskId: state.exp.taskId || '',
   });
   saved(res, btn);
 }
@@ -1158,6 +1186,8 @@ const actions = {
   ...admin.actions,
   'open-mode': () => { state.dialog = { type: 'mode' }; render(); },
   'close-dialog': () => { state.dialog = null; render(); },
+  'consent-yes': () => { consentResolve?.(true); consentResolve = null; state.dialog = null; render(); },
+  'consent-no': () => { consentResolve?.(false); consentResolve = null; state.dialog = null; render(); },
   'confirm-mode': confirmMode,
   'reload-config': loadConfig,
   'fill-sample': () => { state.video.text = SAMPLE_TEXT; state.video.inputError = ''; render(); },
@@ -1166,7 +1196,7 @@ const actions = {
   'resume-video': resumeVideo,
   'save-video': async (btn) => {
     const r = state.video.result; if (!r) return;
-    saved(await saveWork({ kind: 'video', type: '视频口播', title: state.video.text.slice(0, 20), url: r.videoUrl, duration: r.duration, mode: r.mode }), btn);
+    saved(await saveWork({ kind: 'video', type: '视频口播', title: state.video.text.slice(0, 20), url: r.videoUrl, duration: r.duration, mode: r.mode, taskId: state.video.taskId || '' }), btn);
   },
   'run-voice': runVoice,
   'save-voice': async (btn) => {
@@ -1327,6 +1357,7 @@ const actions = {
     t.busy = ''; render();
   },
   'livetest-mic-toggle': () => { if (state.livetest.micActive) stopMic('user'); else startMic(); },
+  'livetest-mic-revoke': () => { micConsent.revoke(); toast('已撤回录音同意，下次开麦克风会重新询问。'); },
   'livetest-mic-remaining': () => {
     const s = micSession;
     if (!s || s.ws.readyState !== WebSocket.OPEN) { toast('麦克风未连接。'); return; }
@@ -1484,7 +1515,7 @@ const actions = {
       const params = liveScriptJsonToParams(JSON.parse(d.script.scriptJson));
       if (!params) { toast('这个脚本不是直播脚本，无法打开。'); return; }
       state.exp.abort?.abort();
-      state.exp = { capId: 'live-script', params, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null };
+      state.exp = { capId: 'live-script', params, running: false, stage: '', queued: false, status: null, expectMs: 60000, startedAt: 0, taskId: null, error: null, result: null, abort: null };
       state.expPrefill = null;
       state.expScriptLoaded = el.dataset.id;
       go('experience/live-script');
@@ -1652,7 +1683,7 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && state.dialog && state.dialog.type !== 'cred') { state.dialog = null; render(); envSwitch.focus(); return; }
+  if (ev.key === 'Escape' && state.dialog && state.dialog.type !== 'cred') { if (state.dialog.type === 'consent') { consentResolve?.(false); consentResolve = null; } state.dialog = null; render(); envSwitch.focus(); return; }
   if (ev.key === 'Enter' && ev.target.id === 'chat-input' && !ev.isComposing) { ev.preventDefault(); sendChat(); }
   if (ev.key === 'Tab' && state.dialog) { // 弹窗内循环焦点
     const f = [...overlayRoot.querySelectorAll('button:not([disabled]), a[href]')];

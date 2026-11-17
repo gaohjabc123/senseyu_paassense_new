@@ -21,7 +21,14 @@
 //
 // 本文件只含纯函数（除 assertVendorQuota 与 DeepSeek 调用外），可单测。
 import { AppError } from './errors.mjs';
-import { pick } from './ruying.mjs';
+import { pick, isLocalUrl } from './ruying.mjs';
+
+export { isLocalUrl };
+
+/** 本机地址平台下载不到，提前拦住（课程 ch5 asr.js 的 isLocalUrl；builder 只在真实模式调用，不走演示路径） */
+function assertPublicUrl(url, label) {
+  if (isLocalUrl(url)) throw fail('INVALID_INPUT', `${label}是本机地址，平台下载不到，请用本站上传或公网地址。`);
+}
 
 const fail = (code, message, hint = '', action = 'fix') => new AppError({ code, message, hint, action });
 const words = (t) => [...String(t || '').replace(/\s/g, '')].length;
@@ -51,6 +58,7 @@ export const GREEN_DEFAULTS = {
 export function buildVoiceCloneBody(p = {}) {
   const audioUrl = nonEmpty(p.audioUrl, '训练音频地址');
   if (!isHttpUrl(audioUrl)) throw fail('INVALID_INPUT', '训练音频地址需为 http(s) 地址。');
+  assertPublicUrl(audioUrl, '训练音频地址');
   const taskType = ['TTS3', 'TTS6', 'TTS7', 'TTS8', 'TTS101'].includes(String(p.taskType || '').toUpperCase())
     ? String(p.taskType).toUpperCase() : 'TTS8';
   const body = {
@@ -76,6 +84,7 @@ export function buildVoiceCloneBody(p = {}) {
 export function buildAvatarTrainBody(p = {}) {
   const videoUrl = nonEmpty(p.videoUrl, '采集视频地址');
   if (!isHttpUrl(videoUrl)) throw fail('INVALID_INPUT', '采集视频地址需为 http(s) 地址。');
+  assertPublicUrl(videoUrl, '采集视频地址');
   const segmentStyle = clampInt(p.segmentStyle, 1, 0, 3);
   const personal = { segmentStyle, assetScale: 1.0 };
   if (segmentStyle === 1 || segmentStyle === 3) {
@@ -124,6 +133,8 @@ export function buildAvatarRebuildBody(p = {}) {
   };
   if (!isHttpUrl(body.videoUrl)) throw fail('INVALID_INPUT', '新素材视频地址需为 http(s) 地址。');
   if (!isHttpUrl(body.modelUrl)) throw fail('INVALID_INPUT', '原模型文件地址需为 http(s) 地址。');
+  assertPublicUrl(body.videoUrl, '新素材视频地址');
+  assertPublicUrl(body.modelUrl, '原模型文件地址');
   return body;
 }
 
@@ -131,7 +142,7 @@ export function buildAvatarRebuildBody(p = {}) {
 export function buildImageEditBody(p = {}) {
   const images = String(p.images || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   if (!images.length || images.length > 3) throw fail('INVALID_INPUT', '素材图片 1~3 张，每行一个地址。');
-  for (const u of images) if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '素材图片地址需为 http(s) 地址。');
+  for (const u of images) { if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '素材图片地址需为 http(s) 地址。'); assertPublicUrl(u, '素材图片地址'); }
   return {
     imageName: nonEmpty(p.imageName || 'AI 编辑图片', '图片名称').slice(0, 64),
     param: JSON.stringify({
@@ -142,19 +153,31 @@ export function buildImageEditBody(p = {}) {
   };
 }
 
-/** 绿幕分割效果预览请求体（POST /api/2dvh/v1/material/2davatar/model/green/segment/{image|video}/create） */
+/** 绿幕分割效果预览请求体（POST /api/2dvh/v1/material/2davatar/model/green/segment/{image|video}/create）
+ * 低阈值默认 40（课程 ch3 green.js GREEN_FIELDS：低 10–80 默认 40、高 70–220 默认 160、blur 1–24 默认 3 奇数步长 2、
+ * 去绿 0–100 默认 100、色彩平衡 -1–1 默认 0.5）；低阈值 ≥ 高阈值时报 INVALID_INPUT。
+ * BlurKs 奇数问题：API_NOTES.md 里无绿幕/blur 内容，文档参数表写 1–24、错误码 84999920 说明写“须为奇数”
+ * 的说法只见于课程注释、未对飞书文档原文核实，因此本站只做前端提示（见 capabilities.js blur 字段 hint），不硬拦。 */
 export function buildGreenPreviewBody(p = {}) {
   const url = nonEmpty(p.sourceUrl, '图片/视频地址');
   if (!isHttpUrl(url)) throw fail('INVALID_INPUT', '图片/视频地址需为 http(s) 地址。');
+  assertPublicUrl(url, '图片/视频地址');
   const isVideo = /\.(mp4|mov|webm|avi)(\?|#|$)/i.test(url);
+  const high = clampInt(p.threshold, 160, isVideo ? 70 : 0, isVideo ? 220 : 255);
+  const low = clampInt(p.lowThreshold, 40, 10, 80);
+  if (low >= high) throw fail('INVALID_INPUT', `绿幕低阈值（${low}）应小于高阈值（${high}），请调小低阈值或调大高阈值。`);
+  // 蓝幕分支（课程 buildGreenParam）：采样色 [255,0,0]；色彩平衡未填时默认 0（绿幕默认 0.5）
+  const blue = String(p.screen || 'green') === 'blue';
+  const sample = blue ? [255, 0, 0] : [0, 255, 0];
+  const spill = (p.spill === undefined || p.spill === '') ? (blue ? 0 : 0.5) : clampNum(p.spill, 0.5, -1, 1);
   const param = {
-    green_params_refineth_h_bgr: clampInt(p.threshold, 160, isVideo ? 70 : 0, isVideo ? 220 : 255),
-    green_params_refineth_l_bgr: 40,
+    green_params_refineth_h_bgr: high,
+    green_params_refineth_l_bgr: low,
     green_params_blur_ks: clampInt(p.blur, 3, 1, 24),
     green_params_colorbalance: clampInt(p.colorbalance, 100, 0, 100),
-    green_params_spill_byalpha: clampNum(p.spill, 0.5, -1, 1),
-    green_params_sample_point_bgr: [0, 255, 0],
-    green_params_sample_background: { color: [0, 255, 0] },
+    green_params_spill_byalpha: spill,
+    green_params_sample_point_bgr: sample,
+    green_params_sample_background: { color: sample },
   };
   return {
     kind: isVideo ? 'video' : 'image',
@@ -198,14 +221,34 @@ export const BEAUTY_DEFAULTS = [
   ['shrinkWholeHead', 0], ['contrastStrength', 0.05], ['saturationStrength', 0.1],
   ['sharpen', 0], ['clear', 0], ['bokehStrength', 0],
 ];
+/** 视频画面的图层 z_position 校验（课程 ch3 layers.js checkZ 等价）：
+ * 数字人、前景图、前景文字的 z_position 必填且不可重复；背景与字幕/标题不参与（无 z_position）。
+ * 只适用于 video-script：live-script 的 digital_role 按控制台导出无 z_position，不可照搬。 */
+export function checkVideoLayers(param) {
+  const layers = [];
+  if (param.digital_role) layers.push({ kind: '数字人', name: param.digital_role.name || String(param.digital_role.id || ''), z: param.digital_role.z_position });
+  (param.foregrounds || []).forEach((f, i) => layers.push({ kind: '前景', name: f.name || `前景${i + 1}`, z: f.z_position }));
+  (param['foreground-texts'] || []).forEach((t) => layers.push({ kind: '前景文字', name: t.text, z: t.z_position }));
+  const errs = [];
+  for (const l of layers) if (!Number.isInteger(l.z)) errs.push(`${l.kind}「${l.name}」缺少 z_position`);
+  const seen = new Map();
+  for (const l of layers) {
+    if (!Number.isInteger(l.z)) continue;
+    if (seen.has(l.z)) errs.push(`z_position=${l.z} 重复：${seen.get(l.z)} 与 ${l.kind}「${l.name}」`);
+    else seen.set(l.z, `${l.kind}「${l.name}」`);
+  }
+  return errs;
+}
 export function buildVideoCreateParam(p = {}, { qid = '', voice = null, avatarId = null, avatarName = '' } = {}) {
   const lines = nonEmpty(p.lines, '台词内容');
   if (words(lines) < 10) throw fail('INVALID_INPUT', '视频合成的台词至少 10 个字。');
+  assertPublicUrl(String(p.modelUrl || ''), '数字人形象 zip 包地址');
   const subtitleStyle = String(p.subtitle || '底部白字');
   const videoFormat = String(p.videoFormat || 'mp4').toLowerCase() === 'webm' ? 'webm' : 'mp4';
   const watermarkContent = String(p.watermarkContent || '').trim();
   if (watermarkContent && !/^[A-Za-z0-9]+$/.test(watermarkContent)) throw fail('INVALID_INPUT', '水印内容仅限英文数字。');
   const subtitleUrls = String(p.subtitleUrls || '').split(/\r?\n/).map((s) => s.trim()).filter((s) => /^https?:\/\//.test(s));
+  for (const u of subtitleUrls) assertPublicUrl(u, '字幕文件地址');
   const param = {
     version: '0.0.17',
     video_format: videoFormat,
@@ -257,6 +300,7 @@ export function buildVideoCreateParam(p = {}, { qid = '', voice = null, avatarId
   // 装饰：前景图 / 背景图 / 背景音乐（只在填了链接时出现）
   const fgUrl = String(p.foregroundUrl || '').trim();
   if (isHttpUrl(fgUrl)) {
+    assertPublicUrl(fgUrl, '前景图地址');
     const fg = {
       name: '前景', type: 0, url: fgUrl,
       rotation: clampNum(p.fgRotate, 0, 0, 360),
@@ -272,6 +316,7 @@ export function buildVideoCreateParam(p = {}, { qid = '', voice = null, avatarId
   }
   const bgUrl = String(p.bgUrl || '').trim();
   if (isHttpUrl(bgUrl)) {
+    assertPublicUrl(bgUrl, '背景图地址');
     param.backgrounds = [{
       name: '背景', type: 0, url: bgUrl, rect: [0, 0, 1080, 1920],
       cycle: false, start: clampInt(p.bgStart, 0, 0, 3600000), duration: clampInt(p.bgDuration, -1, -1, 3600000),
@@ -279,6 +324,7 @@ export function buildVideoCreateParam(p = {}, { qid = '', voice = null, avatarId
   }
   const bgmUrl = String(p.bgmUrl || '').trim();
   if (isHttpUrl(bgmUrl)) {
+    assertPublicUrl(bgmUrl, '背景音乐地址');
     param['background-musics'] = [{ url: bgmUrl, volume: clampNum(p.bgmVolume, 100, 0, 100), cycle: p.bgmCycle !== '关闭' }];
   }
   // 文字：标题 / 前景文字（只在文字非空时出现）
@@ -315,6 +361,9 @@ export function buildVideoCreateParam(p = {}, { qid = '', voice = null, avatarId
     }
     param.effects = { version: '1.0', beautify: ordered };
   }
+  // 图层 z_position 校验：人物层与前景图（2）/前景文字（3）不可重复，冲突时指明双方
+  const zErrs = checkVideoLayers(param);
+  if (zErrs.length) throw fail('INVALID_INPUT', zErrs.join('；'));
   return {
     videoName: nonEmpty(p.videoName || p.name, '视频名称').slice(0, 40),
     param: JSON.stringify(param),
@@ -569,6 +618,7 @@ export function buildMultiCommandQueueBody(p = {}) {
   } else if (type === 1) {
     const audioUrl = nonEmpty(p.audioUrl, '语音输入的音频地址');
     if (!isHttpUrl(audioUrl)) throw fail('INVALID_INPUT', '语音输入的音频地址需为 http(s) 地址。');
+    assertPublicUrl(audioUrl, '语音输入的音频地址');
     param = { audioUrl };
   } else {
     const script = p.scriptJson ?? p.script;
@@ -699,6 +749,7 @@ export function buildDecorationTaskBody(p = {}, { faceFeatureId = '' } = {}) {
   if (!qid) throw fail('INVALID_INPUT', '装修脚本需要选一个发音人（平台要求 tts_config.qid 必填）。');
   const roleUrl = nonEmpty(p.roleUrl, '数字人模型 zip 地址');
   if (!isHttpUrl(roleUrl)) throw fail('INVALID_INPUT', '数字人模型 zip 地址需为 http(s) 地址。');
+  assertPublicUrl(roleUrl, '数字人模型 zip 地址');
   const script = {
     version: '0.0.1',
     resolution: [1080, 1920],
@@ -726,7 +777,7 @@ export function buildContentRepoBody(p = {}, { faceFeatureId = '' } = {}) {
   const audioUrls = String(p.audioUrls || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   let voiceContent;
   if (audioUrls.length) {
-    for (const u of audioUrls) if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '口水音频地址需为 http(s) 地址。');
+    for (const u of audioUrls) { if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '口水音频地址需为 http(s) 地址。'); assertPublicUrl(u, '口水音频地址'); }
     voiceContent = audioUrls.map((audio) => ({ audio }));
   } else {
     const lines = String(p.lines || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -765,6 +816,7 @@ export function buildWarmingBody(p = {}) {
   const fileId = nonEmpty(p.fileId, '素材文件 ID');
   const fileUrl = nonEmpty(p.fileUrl, '素材文件地址');
   if (!isHttpUrl(fileUrl)) throw fail('INVALID_INPUT', '素材文件地址需为 http(s) 地址。');
+  assertPublicUrl(fileUrl, '素材文件地址');
   const zid = nonEmpty(p.zid, 'zip 素材文件 ID');
   const md5 = nonEmpty(p.md5, 'zip 素材文件 MD5');
   return { materialName: nonEmpty(p.materialName, '预热任务名称').slice(0, 64), param: JSON.stringify({ fileId, fileUrl, zid, md5 }) };
@@ -777,7 +829,7 @@ export function buildWarmingBody(p = {}) {
 export function buildTranscodeBody(p = {}) {
   const urls = String(p.fileUrls || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   if (!urls.length) throw fail('INVALID_INPUT', '请至少填一个视频文件地址。');
-  for (const u of urls) if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '视频文件地址需为 http(s) 地址。');
+  for (const u of urls) { if (!isHttpUrl(u)) throw fail('INVALID_INPUT', '视频文件地址需为 http(s) 地址。'); assertPublicUrl(u, '视频文件地址'); }
   return { materialName: nonEmpty(p.materialName, '转码任务名称').slice(0, 64), param: JSON.stringify(urls.map((fileUrl) => ({ fileUrl }))) };
 }
 
@@ -818,6 +870,7 @@ export function parseWarmingFileIds(input) {
 export function buildTransitionBody(p = {}) {
   const url = nonEmpty(p.url, '过渡视频地址');
   if (!isHttpUrl(url)) throw fail('INVALID_INPUT', '过渡视频地址需为 http(s) 地址。');
+  assertPublicUrl(url, '过渡视频地址');
   const materialId = nonEmpty(p.materialId, '素材 ID');
   if (!/^[A-Za-z0-9_+-]+$/.test(materialId)) throw fail('INVALID_INPUT', '素材 ID 只能用英文字母、数字、下划线、加号、减号。');
   return { name: nonEmpty(p.name, '任务名称').slice(0, 64), param: JSON.stringify([{ url, materialId }]) };

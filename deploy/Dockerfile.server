@@ -8,6 +8,7 @@ COPY package.json ./
 COPY dist ./dist
 COPY server ./server
 COPY src/lib/capabilities.js ./src/lib/capabilities.js
+COPY src/lib/tts.js ./src/lib/tts.js
 COPY scripts/admin.mjs ./scripts/admin.mjs
 RUN chmod -R a+rX /app/dist /app/server /app/src /app/scripts /app/package.json && mkdir -p /app/data && chown -R node:node /app/data
 USER node

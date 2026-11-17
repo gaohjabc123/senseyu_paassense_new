@@ -7,6 +7,7 @@ import { INTERPRET, TOUR_STEPS } from './guide.js';
 import { EXPERIENCES, estimateSeconds } from './wizard.js';
 import { experienceView } from './experience.js'; // 创作中心后两个快捷入口嵌通用体验器（experience.js 只在调用时用 views 的 errorBlock，循环引用安全）
 import { esc, words } from './html.js';
+import { downloadName } from './works.js';
 
 /* ============ 通用片段 ============ */
 const isReal = (s) => s.mode === 'real';
@@ -89,14 +90,16 @@ export function errorBlock(err, { retry = '', resume = '' } = {}) {
 }
 
 const spinner = '<span class="spinner" aria-hidden="true"></span>';
-export function loadingBlock(text) { return `<div class="loading" role="status">${spinner}<span>${esc(text)}</span></div>`; }
+/** 加载块；tipKey 非空时在行内留一个等待提示位（由每秒走字的 ticker 按 WAIT_TIPS 档位填文案） */
+export function loadingBlock(text, tipKey = '') { return `<div class="loading" role="status">${spinner}<span>${esc(text)}</span>${tipKey ? ` <span data-wait-tip="${tipKey}"></span>` : ''}</div>`; }
 const fmtElapsed = (ms) => { const s = Math.floor(ms / 1000); return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`; };
 
-/** 进行中的任务：阶段、已等待时间、平台排队提示、停止等待 */
+/** 进行中的任务：阶段、已等待时间、平台排队提示、停止等待；等待提示位由 ticker 按档位填文案 */
 function taskProgress({ stage, elapsed = 0, queued = false, stopAction, key }) {
   return `<div class="task-progress" role="status" aria-live="polite">
     <div class="task-progress__head">${spinner}<b>${esc(stage)}</b><span class="muted" data-elapsed="${key}">已等待 ${fmtElapsed(elapsed)}</span>
       ${stopAction ? `<button class="btn btn--sm btn--ghost" data-action="${stopAction}">停止等待</button>` : ''}</div>
+    <span class="task-progress__tip" data-wait-tip="${key}"></span>
     ${queued ? '<p class="task-progress__note">平台侧队列可能在排队，任务还没开始生成。这通常需要几分钟，可以保持页面打开继续等待；不想等也可以停止，稍后重新生成。</p>' : ''}
   </div>`;
 }
@@ -369,7 +372,7 @@ function worksTable(list, { withDelete = false, canSubmit = false } = {}) {
       <div class="work-item__main"><span class="work-item__title"><b>${esc(w.title)}</b>${workStatusPill(w)}</span>
         <span class="work-item__meta">${esc(w.type)} · ${w.mode === 'real' ? '真实环境' : '演示样例'} · ${esc(w.createdAt)}${w.remote ? '' : ` · 剩余 ${w.days} 天`}</span>
         ${w.review?.comment ? `<span class="work-item__comment">评语：${esc(w.review.comment)}</span>` : ''}</div>
-      <div class="work-item__actions">${workOpen(w)}${withDelete ? `${
+      <div class="work-item__actions">${workOpen(w)}${w.url && w.kind !== 'text' ? `<a class="btn btn--sm" href="${esc(w.url)}" download="${esc(downloadName(w, w.url, w.kind === 'audio' ? 'mp3' : w.kind === 'image' ? 'png' : 'mp4'))}">下载</a>` : ''}${withDelete ? `${
         canSubmit && w.remote && !w.submittedAt ? `<button class="btn btn--sm btn--primary" type="button" data-action="work-submit" data-id="${w.id}" aria-label="提交给老师：${esc(w.title)}">提交给老师</button>` : ''}${
         w.submittedAt && !w.review ? `<button class="btn btn--sm" type="button" data-action="work-withdraw" data-id="${w.id}" aria-label="撤回提交：${esc(w.title)}">撤回</button>` : ''
       }<button class="btn btn--sm" type="button" data-rename="${w.id}" aria-label="给作品改名：${esc(w.title)}">改名</button>${
@@ -416,7 +419,7 @@ function videoPanel(s) {
   ${v.result ? `<div class="card" id="video-result"><div class="card__title"><h2>生成结果</h2>${resultModeTag(v.result.mode)}</div>
     <video controls playsinline preload="metadata" ${v.result.thumbUrl ? `poster="${esc(v.result.thumbUrl)}"` : ''} src="${esc(v.result.videoUrl)}" class="media-video" aria-label="生成的数字人口播视频"></video>
     <div class="actions"><button class="btn" type="button" data-action="save-video">保存到作品</button>
-      <a class="btn" href="${esc(v.result.videoUrl)}" download>下载视频</a>
+      <a class="btn" href="${esc(v.result.videoUrl)}" download="${esc(downloadName({ title: String(v.text || '').slice(0, 20) || '视频口播', taskId: v.taskId || '' }, v.result.videoUrl, 'mp4'))}">下载视频</a>
       <button class="btn" type="button" data-action="run-video">重新生成</button></div>
     ${interpret(INTERPRET.avatar(v.result))}</div>` : ''}`;
 }
@@ -447,12 +450,12 @@ function voicePanel(s) {
     <p class="field-hint">${isReal(s) ? '使用平台发音人合成；语速、音量、语调与控制台一致。' : '演示环境返回本地样例音频，时长按字数估算。'}</p>
     <div class="actions"><button class="btn btn--primary" type="button" data-action="run-voice" ${v.busy ? 'disabled aria-busy="true"' : ''}>${v.busy ? '合成中…' : '合成语音'}</button></div>
     ${v.inputError ? `<p class="field-error" role="alert">${esc(v.inputError)}</p>` : ''}
-    ${v.busy ? loadingBlock(isReal(s) ? '平台正在合成配音，通常需要几秒到几十秒…' : '正在合成…') : ''}
+    ${v.busy ? loadingBlock(isReal(s) ? '平台正在合成配音，通常需要几秒到几十秒…' : '正在合成…', 'voice') : ''}
     ${v.error ? errorBlock(v.error, { retry: 'run-voice' }) : ''}
     ${v.result ? `<div class="result-block"><div class="result-block__head">${resultModeTag(v.result.mode)}</div>
       <audio controls src="${esc(v.result.audio_url)}" class="media-audio" aria-label="合成的语音"></audio>
       <div class="actions"><button class="btn" type="button" data-action="save-voice">保存到作品</button>
-        <a class="btn" href="${esc(v.result.audio_url)}" download>下载音频</a></div>
+        <a class="btn" href="${esc(v.result.audio_url)}" download="${esc(downloadName({ title: String(v.text || '').slice(0, 20) || '语音合成', taskId: '' }, v.result.audio_url, 'mp3'))}">下载音频</a></div>
       ${interpret(INTERPRET.voice(v.result))}</div>` : ''}
   </div>`;
 }
@@ -477,7 +480,7 @@ function kbPanel(s) {
   const empty = k.loaded && !docs.length;
   const messages = c.messages.length
     ? c.messages.map((m) => `<div class="msg msg--${m.role}"><span class="msg__role">${m.role === 'user' ? '我' : '助手'}</span>
-        <div class="msg__body">${m.notice ? `<p class="msg__notice">${esc(m.notice)}</p>` : ''}${m.text ? `<div class="msg__text">${esc(m.text)}</div>` : (c.streaming && m.pending ? `<span class="typing">${spinner} 正在检索资料…</span>` : '')}
+        <div class="msg__body">${m.notice ? `<p class="msg__notice">${esc(m.notice)}</p>` : ''}${m.text ? `<div class="msg__text">${esc(m.text)}</div>` : (c.streaming && m.pending ? `<span class="typing">${spinner} ${esc(m.tip || '正在检索资料…')}</span>` : '')}
           ${m.sources?.length ? `<div class="msg__sources">依据：${m.sources.map((x) => `<span>《${esc(x.docName)}》${x.heading && x.heading !== x.docName.replace(/\.[^.]+$/, '') ? ` · ${esc(x.heading)}` : ''}</span>`).join('')}</div>` : ''}
           ${m.error ? errorBlock(m.error, { retry: 'chat-retry' }) : ''}</div></div>`).join('')
     : (empty ? emptyState('先上传资料，再来提问', '知识库为空时无法回答问题。上传后可以问资料里的任何内容。')
@@ -519,7 +522,10 @@ export function tasksView(s) {
     : '<div class="alert alert--warn" role="note"><div class="alert__body"><b>你还没有被分到班级</b><p>作品可以正常保存，但暂时不能提交。请联系任课教师或学校管理员把你加入班级。</p></div></div>';
   const importNote = signedIn && s.localWorkCount ? `<div class="alert alert--info" role="note"><div class="alert__body"><b>这台电脑上还有 ${s.localWorkCount} 条未登录时保存的作品</b><p>它们只存在这台电脑的浏览器里，7 天后会自动清除。如果是你的作品，可以导入到账号里长期保存。</p></div>
       <button class="btn btn--sm" type="button" data-action="works-import-local">导入到我的账号</button></div>` : '';
-  return `<div class="console">${classNote}${importNote}
+  // 2 天内过期提醒（仅本机作品层：未登录时作品只存本机 7 天；登录用户的服务端作品链接有效期以如影平台为准，见下方说明）
+  const expiring = !signedIn ? ws.filter((w) => !w.remote && typeof w.days === 'number' && w.days <= 2) : [];
+  const expiringNote = expiring.length ? `<div class="alert alert--warn" role="note"><div class="alert__body"><b>有 ${expiring.length} 条本机作品将在 2 天内过期</b><p>本机作品只保存 7 天，到期自动清除，请及时下载留存；登录后保存的作品会进入账号长期保留。</p></div></div>` : '';
+  return `<div class="console">${classNote}${importNote}${expiringNote}
     ${s.worksError ? errorBlock(s.worksError, { retry: 'works-reload' }) : ''}
     <div class="card"><div class="card__title"><h2>我的作品</h2>
       ${ws.length ? `<button class="btn btn--sm" type="button" data-action="works-clear">全部清空</button>` : ''}</div>
@@ -624,7 +630,8 @@ export function liveTestView(s) {
     ${step(4, '麦克风接管', 'WebSocket 16k PCM', `
       <p class="muted">浏览器采集麦克风 → 重采样 16k 单声道 PCM → 走 WebSocket 发给平台。需要浏览器麦克风权限；只在真实环境可用（演示环境没有真实直播间）。</p>
       <div class="actions"><button class="btn btn--primary" type="button" data-action="livetest-mic-toggle" ${dis(hasSession && t.started && !t.busy)}>${t.micActive ? '关闭麦克风接管' : '开启麦克风接管'}</button>
-      <button class="btn" type="button" data-action="livetest-mic-remaining" ${dis(t.micActive)}>查剩余</button></div>
+      <button class="btn" type="button" data-action="livetest-mic-remaining" ${dis(t.micActive)}>查剩余</button>
+      <button class="btn btn--sm" type="button" data-action="livetest-mic-revoke">撤回录音同意</button></div>
       <p class="field-hint">${t.micStatus ? esc(t.micStatus) : (hasSession ? (t.started ? '麦克风未开启。' : '请先开播。') : '请先创建直播间。')}</p>`)}
     ${step(5, '关闭', '', `
       <p class="muted">不用时请关播，否则占用直播路数；10 分钟无心跳平台也会自动断播。</p>
@@ -899,7 +906,7 @@ export function workDialog(w) {
   else if (w.kind === 'audio' && w.url) body = `<audio controls src="${esc(w.url)}" class="media-audio" aria-label="${esc(w.title)}"></audio>`;
   else if (w.kind === 'image' && w.url) body = `<img src="${esc(w.url)}" alt="${esc(w.title)}" class="media-image">`;
   else body = `<pre class="json-block">${esc(w.text)}</pre>`;
-  const links = w.url ? `${(w.kind === 'video' || w.kind === 'audio') ? `<a class="btn" href="${esc(w.url)}" download>下载</a>` : ''}<a class="btn" href="${esc(w.url)}" target="_blank" rel="noreferrer">在新窗口打开</a>` : '';
+  const links = w.url ? `${(w.kind === 'video' || w.kind === 'audio') ? `<a class="btn" href="${esc(w.url)}" download="${esc(downloadName(w, w.url, w.kind === 'audio' ? 'mp3' : 'mp4'))}">下载</a>` : ''}<a class="btn" href="${esc(w.url)}" target="_blank" rel="noreferrer">在新窗口打开</a>` : '';
   const who = w.student ? `<p class="muted">${esc(w.className || '')} · ${esc(w.student.name || w.student.username)}（${esc(w.student.username)}）</p>` : '';
   const review = w.review ? `<div class="review-box"><b>评分 ${w.review.score} 分</b>${w.review.reviewer ? `<small> · ${esc(w.review.reviewer)}</small>` : ''}${w.review.comment ? `<p>${esc(w.review.comment)}</p>` : ''}</div>` : '';
   return `<div class="sheet-mask" data-action="close-dialog"></div>

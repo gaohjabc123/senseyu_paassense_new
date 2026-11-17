@@ -24,3 +24,30 @@ export const INTERPRET = {
     { label: '不对先查什么', text: '① 文字是否至少 4 个字 ② 是否有生僻字或多音字 ③ 网络是否正常' },
   ],
 };
+
+/** 等待提示：按已等待时长给不同的话（课程 ch5 guide.js WAIT_TIPS 的三档时点；文案按本站口径改写，不用课程的“小禾”） */
+export const WAIT_TIPS = [
+  { afterMs: 1200, text: '正在思考…' },
+  { afterMs: 5000, text: '问题有点复杂，再等几秒～' },
+  { afterMs: 12000, text: '网络有点慢，还在努力回答…' },
+];
+
+/** 给定已等待毫秒数，返回当前档位的提示（未到第一档返回 ''）；与“已等待 x 秒”并存 */
+export function waitTipFor(elapsedMs) {
+  let tip = '';
+  for (const w of WAIT_TIPS) if (elapsedMs >= w.afterMs) tip = w.text;
+  return tip;
+}
+
+/** 计时器版等待提示（课程 startTips/stopTips 结构）：到档位时调 onTip；stop() 清掉全部定时器。
+ * 调用方收到首字/首包时立即 stop()，提示即消失。 */
+export function createWaitTips(onTip, tips = WAIT_TIPS) {
+  let timers = [];
+  return {
+    start() {
+      this.stop();
+      timers = tips.map((w) => setTimeout(() => onTip(w.text), w.afterMs));
+    },
+    stop() { timers.forEach(clearTimeout); timers = []; },
+  };
+}

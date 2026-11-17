@@ -4,12 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildVoiceCloneBody, buildAvatarTrainBody, buildAvatarRebuildBody, buildImageEditBody,
-  buildGreenPreviewBody, buildVideoCreateParam, buildLiveScriptParam, buildLiveChannelParam,
+  buildGreenPreviewBody, buildVideoCreateParam, checkVideoLayers, buildLiveScriptParam, buildLiveChannelParam,
   buildSuperProChannelParam, buildSuperProControlParam, buildDecorationTaskBody,
   buildLiveCommandParam, buildMultiChannelCreateBody, buildMultiCommandQueueBody,
   buildBillListBody, buildBillVoiceListBody, billRange, billTabOf, normalizeBillRow,
-  BILL_ALGO_GROUP_DEFAULT, parseTransitionTaskIds, parseWarmingFileIds,
-  extractTaskResult, assertVendorQuota,
+  BILL_ALGO_GROUP_DEFAULT, parseTransitionTaskIds, parseWarmingFileIds, buildWarmingBody,
+  extractTaskResult, assertVendorQuota, isLocalUrl,
 } from '../server/lib/realcap.mjs';
 
 test('音色复刻：请求体按文档必填字段构造，TTS10 等非法模型被纠正', () => {
@@ -438,4 +438,49 @@ test('预热素材 fileId 解析：换行/逗号/中文逗号分隔，去重，�
   assert.deepEqual(parseWarmingFileIds(['f1', 'f2']), ['f1', 'f2']);
   assert.throws(() => parseWarmingFileIds(''), /至少填一个/);
   assert.throws(() => parseWarmingFileIds(Array.from({ length: 11 }, (_, i) => `f${i}`).join('\n')), /最多查 \/ 删 10 个/);
+});
+
+test('绿幕预览：低阈值字段生效，低≥高报错；蓝幕分支改采样色与色彩平衡默认', () => {
+  const d = buildGreenPreviewBody({ sourceUrl: 'https://cdn.invalid/g.png' });
+  assert.equal(JSON.parse(d.param).green_params_refineth_l_bgr, 40, '低阈值默认 40');
+  const low = buildGreenPreviewBody({ sourceUrl: 'https://cdn.invalid/g.png', lowThreshold: '30', threshold: '160' });
+  assert.equal(JSON.parse(low.param).green_params_refineth_l_bgr, 30);
+  assert.throws(() => buildGreenPreviewBody({ sourceUrl: 'https://cdn.invalid/g.png', lowThreshold: '80', threshold: '80' }), /低阈值.*应小于高阈值/);
+  assert.throws(() => buildGreenPreviewBody({ sourceUrl: 'https://cdn.invalid/g.png', lowThreshold: '70', threshold: '70' }), /低阈值.*应小于高阈值/);
+  const blue = buildGreenPreviewBody({ sourceUrl: 'https://cdn.invalid/g.png', screen: 'blue' });
+  const bp = JSON.parse(blue.param);
+  assert.deepEqual(bp.green_params_sample_point_bgr, [255, 0, 0]);
+  assert.deepEqual(bp.green_params_sample_background.color, [255, 0, 0]);
+  assert.equal(bp.green_params_spill_byalpha, 0, '蓝幕未填色彩平衡时默认 0');
+  const blueKeep = buildGreenPreviewBody({ sourceUrl: 'https://cdn.invalid/g.png', screen: 'blue', spill: '0.7' });
+  assert.equal(JSON.parse(blueKeep.param).green_params_spill_byalpha, 0.7, '蓝幕已填色彩平衡时不覆盖');
+});
+
+test('视频合成图层校验：人物层与前景图/前景文字 z_position 不可重复', () => {
+  const base = { name: '第3章', lines: '大家好，欢迎来到本章课程。', faceFeatureId: 'ff', modelUrl: 'https://cdn.invalid/a.zip' };
+  assert.throws(() => buildVideoCreateParam({ ...base, foregroundUrl: 'https://cdn.invalid/fg.png', roleLayer: 2 }), /z_position=2 重复/);
+  assert.throws(() => buildVideoCreateParam({ ...base, fgText: '前景文字', roleLayer: 3 }), /z_position=3 重复/);
+  assert.doesNotThrow(() => buildVideoCreateParam({ ...base, foregroundUrl: 'https://cdn.invalid/fg.png', fgText: '前景文字', roleLayer: 1 }));
+  assert.doesNotThrow(() => buildVideoCreateParam({ ...base, roleLayer: 2 }), '没有前景图时人物层填 2 不冲突');
+  assert.deepEqual(checkVideoLayers({ digital_role: { name: 'A', z_position: 1 }, foregrounds: [{ name: '前景', z_position: 1 }] }), ['z_position=1 重复：数字人「A」 与 前景「前景」']);
+  assert.deepEqual(checkVideoLayers({ digital_role: { name: 'A' } }), ['数字人「A」缺少 z_position']);
+  assert.deepEqual(checkVideoLayers({ digital_role: { name: 'A', z_position: 1 } }), []);
+});
+
+test('本机地址拦截：localhost/127/内网段提交前报 INVALID_INPUT，公网地址与相对路径不误拦', () => {
+  assert.equal(isLocalUrl('http://localhost:8787/files/a.wav'), true);
+  assert.equal(isLocalUrl('http://127.0.0.1:5173/media/a.png'), true);
+  assert.equal(isLocalUrl('http://192.168.1.10/a.mp3'), true);
+  assert.equal(isLocalUrl('http://10.0.0.5/a.mp3'), true);
+  assert.equal(isLocalUrl('http://172.20.3.4/a.mp3'), true);
+  assert.equal(isLocalUrl('http://172.32.0.1/a.mp3'), false, '172.32 不在 16–31 段');
+  assert.equal(isLocalUrl('https://cdn.invalid/a.mp3'), false);
+  assert.equal(isLocalUrl('media/xxx.png'), false, '相对路径解析失败返回 false，不误拦');
+  assert.equal(isLocalUrl(''), false);
+  const clone = { audioUrl: 'http://localhost:8787/a.mp3', speakerName: '小王', companyName: '某公司', voiceName: '音' };
+  assert.throws(() => buildVoiceCloneBody(clone), /本机地址/);
+  assert.throws(() => buildGreenPreviewBody({ sourceUrl: 'http://127.0.0.1:5173/g.png' }), /本机地址/);
+  assert.throws(() => buildImageEditBody({ images: 'https://cdn.invalid/a.jpg\nhttp://192.168.0.2/b.jpg', prompt: '改图' }), /本机地址/);
+  assert.throws(() => buildWarmingBody({ fileId: 'f1', fileUrl: 'http://10.1.2.3/f.zip', zid: 'z', md5: 'm' }), /本机地址/);
+  assert.throws(() => buildVideoCreateParam({ name: 't', lines: '大家好，欢迎来到本章课程。', faceFeatureId: 'ff', modelUrl: 'https://cdn.invalid/a.zip', foregroundUrl: 'http://localhost:5173/fg.png' }), /本机地址/);
 });

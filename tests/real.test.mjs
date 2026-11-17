@@ -3,11 +3,14 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, pollUntilDone, KB_TEXT, SUPER, superClient, setupTenant, fund } from './helpers.mjs';
-import { normalizeDuration, normalizeAppearance } from '../server/lib/ruying.mjs';
+import { normalizeDuration, normalizeAppearance, normalizeTask, TASK_STATUS_TEXT, VOICE_STATUS } from '../server/lib/ruying.mjs';
+import { hintOf, errorBody, E } from '../server/lib/errors.mjs';
+import { speakable } from '../src/lib/tts.js';
 
 const calls = [];
 let invalidateNext = false;
 let failTts = false;
+let ttsResultStatus = null; // 非空时 tts/result 只回该状态（无音频地址），用于测失败码立即报错
 let resourceResponse = { resourceConfig: {
   genVideoDurationTotalQty: 20, genVideoDurationUsageQty: 0.54,
   genImageVideoDurationTotalQty: 120, genImageVideoDurationUsageQty: 0,
@@ -53,7 +56,9 @@ async function fakeFetch(url, init = {}) {
     case '/api/voice/v3/tts/request':
       if (failTts) return { ok: true, status: 200, text: async () => JSON.stringify({ code: 400123, message: '文本含不支持字符' }) };
       return ok({ taskId: 'tts-1' });
-    case '/api/voice/v3/tts/result': return ok({ status: 5, audioUrl: 'https://cdn.invalid/a.mp3', duration: 6.2 });
+    case '/api/voice/v3/tts/result':
+      if (ttsResultStatus !== null) return ok({ status: ttsResultStatus });
+      return ok({ status: 5, audioUrl: 'https://cdn.invalid/a.mp3', duration: 6.2 });
     case '/api/2dvh/v3/material/tts/list': return ok({ result: [
       { id: 1, materialName: '女声-甜美-晓悦', extendParam: JSON.stringify({ qid: 'qid-a', voiceName: '晓悦', gender: 2 }) },
       { id: 2, materialName: '女声-甜美-晓悦', extendParam: JSON.stringify({ qid: 'qid-a', voiceName: '晓悦', gender: 2 }) },
@@ -137,15 +142,62 @@ test('TTS 走 voice v3：request 带 qid，再轮询 result', async () => {
   assert.ok(!calls.some((c) => c.path.includes('/material/voice/tts')), '不应再调用已不存在的旧 TTS 路径');
 });
 
-test('TTS：选中的发音人 + 三滑块发给平台，越界值夹取到接口范围', async () => {
-  calls.length = 0;
+test('TTS：三滑块越界直接报 INVALID_INPUT（写明范围），不再静默夹取', async () => {
   const r = await s.post('/api/tts', { text: '欢迎体验如影数字人', qid: 'qid-custom', speedRatio: 3, volume: 500, pitchOffset: -99 }, 'real');
+  assert.equal(r.code, 'INVALID_INPUT');
+  assert.match(r.message, /语速 speedRatio 需在 0\.5~2 之间/);
+});
+
+test('TTS：三滑块在范围内正常发送，volume 非整数自动取整', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/tts', { text: '欢迎体验如影数字人', qid: 'qid-custom', speedRatio: 1.5, volume: 200.5, pitchOffset: -10 }, 'real');
   assert.equal(r.code, 0, r.message);
   const req = calls.find((c) => c.path === '/api/voice/v3/tts/request');
-  assert.equal(req.body.qid, 'qid-custom');
-  assert.equal(req.body.speed_ratio, 2, '语速超过 2 应夹取到 2');
-  assert.equal(req.body.volume, 400, '音量超过 400 应夹取到 400');
-  assert.equal(req.body.pitch_offset, -60, '语调低于 -60 应夹取到 -60');
+  assert.equal(req.body.speed_ratio, 1.5);
+  assert.equal(req.body.volume, 201);
+  assert.equal(req.body.pitch_offset, -10);
+});
+
+test('TTS：失败状态码立即报错（不循环到 60 秒），文案带状态中文', async () => {
+  calls.length = 0;
+  ttsResultStatus = 1104;
+  try {
+    const r = await s.post('/api/tts', { text: '欢迎体验如影数字人' }, 'real');
+    assert.equal(r.code, 'UPSTREAM_REJECTED');
+    assert.match(r.message, /TTS 内部错误/);
+    assert.equal(calls.filter((c) => c.path === '/api/voice/v3/tts/result').length, 1, '失败码应只查一次就报错，不应反复轮询');
+  } finally { ttsResultStatus = null; }
+});
+
+test('语音状态表 VOICE_STATUS：0 成功、1000 处理中、1104 含 qid 实测备注', () => {
+  assert.equal(VOICE_STATUS[0], '成功');
+  assert.equal(VOICE_STATUS[1000], '处理中');
+  assert.match(VOICE_STATUS[1104], /qid 不存在也回 1104/);
+  assert.equal(VOICE_STATUS[2107], 'ASR 未知的 request ID');
+  assert.equal(VOICE_STATUS[5005], undefined);
+});
+
+test('任务状态表：status 0 保留为“未开始”，不再被 || 1 吞成 1；3 为“已取消”', () => {
+  assert.equal(TASK_STATUS_TEXT[0], '未开始');
+  assert.equal(TASK_STATUS_TEXT[1], '排队中');
+  assert.equal(TASK_STATUS_TEXT[2], '生成中');
+  assert.equal(TASK_STATUS_TEXT[3], '已取消');
+  assert.equal(TASK_STATUS_TEXT[5], '已完成');
+  assert.equal(TASK_STATUS_TEXT[9], '异常');
+  assert.equal(normalizeTask({ id: 1, status: 0 }).status, 0);
+  assert.equal(normalizeTask({ id: 1, status: 0 }).statusText, '未开始');
+  assert.equal(normalizeTask({ id: 1 }).status, 1, '缺字段仍默认 1');
+  assert.equal(normalizeTask({ id: 1, status: 3 }).statusText, '已取消');
+});
+
+test('平台错误码提示：60112160 给验签排查提示；403+99999999 给方法错误提示；errorBody 带 codeHint', () => {
+  assert.match(hintOf(60112160), /验签失败/);
+  assert.match(hintOf(99999999, 403), /请求方法不对/);
+  assert.equal(hintOf(123456), '');
+  const e = E.upstream(400, 'bad', 'detail', 60112160);
+  assert.match(e.hint, /验签失败/);
+  assert.match(errorBody(e).codeHint, /验签失败/);
+  assert.equal(errorBody(E.upstream(400, 'bad', 'detail')).codeHint, '');
 });
 
 test('TTS：不传参数时不发三滑块，不动老调用的默认音色', async () => {
@@ -799,4 +851,28 @@ test('任务中心：演示环境列出演示任务', async () => {
   const row = (list.data.tasks || []).find((t) => String(t.id) === String(r.data.taskId));
   assert.ok(row, '演示任务应在演示列表里');
   assert.equal(row.capabilityName, 'AI 图片编辑');
+});
+
+test('TTS 清洗：Markdown/代码块/链接/表情去掉，只留可朗读的文字', () => {
+  assert.equal(speakable('**你好**'), '你好');
+  assert.equal(speakable('# 标题\n正文'), '标题\n正文');
+  assert.equal(speakable('```js\nconst a = 1;\n```\n正文'), '正文');
+  assert.equal(speakable('看[文档](https://example.com)再说'), '看文档再说');
+  assert.equal(speakable('你好😀世界'), '你好世界');
+  assert.equal(speakable('- 第一点\n- 第二点'), '第一点\n第二点');
+  assert.equal(speakable('第一段\n\n\n第二段'), '第一段\n第二段');
+  assert.equal(speakable(''), '');
+});
+
+test('TTS 入口：Markdown 文案先清洗再发给平台；SSML 文本不清洗', async () => {
+  calls.length = 0;
+  const r = await s.post('/api/tts', { text: '**你好**，欢迎体验如影数字人' }, 'real');
+  assert.equal(r.code, 0, r.message);
+  const req = calls.find((c) => c.path === '/api/voice/v3/tts/request');
+  assert.equal(req.body.query, '你好，欢迎体验如影数字人');
+  calls.length = 0;
+  const r2 = await s.post('/api/tts', { text: '<speak>你好，欢迎体验如影数字人</speak>' }, 'real');
+  assert.equal(r2.code, 0, r2.message);
+  const req2 = calls.find((c) => c.path === '/api/voice/v3/tts/request');
+  assert.equal(req2.body.query, '<speak>你好，欢迎体验如影数字人</speak>', 'SSML 文本不清洗');
 });

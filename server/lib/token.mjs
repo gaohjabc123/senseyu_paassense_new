@@ -6,6 +6,7 @@
 import { buildTokenBody } from './sign.mjs';
 import { maskValue } from './mask.mjs';
 import { AppError, E, toAppError } from './errors.mjs';
+import { UPSTREAM_HEADERS } from './ruying.mjs';
 
 export const REFRESH_BEFORE_MS = 30 * 60 * 1000;
 const MIN_REUSE_MS = 60 * 1000; // 平台下发的 Token 本身就很短时，至少复用 1 分钟，避免每次调用都重新换取
@@ -88,7 +89,7 @@ export class TokenManager {
     try {
       resp = await this.fetch(`${this.cfg.baseUrl}/api/uc/v1/access/api/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...UPSTREAM_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.cfg.requestTimeoutMs || 20000),
       });
