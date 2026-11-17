@@ -18,6 +18,8 @@ export const MEDIA_KINDS = {
   media: { label: '图片或视频', exts: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov'], maxBytes: 100 * 1024 * 1024, accept: 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,.mp4,.mov' },
   // 知识库资料：txt/md 文档（与知识库管理的文件上限一致，2MB；纯文本不验文件头）
   doc: { label: '文档', exts: ['.txt', '.md'], maxBytes: 2 * 1024 * 1024, accept: 'text/plain,text/markdown,.txt,.md' },
+  // 字幕文件：.srt（视频脚本的字幕上传；纯文本不验文件头）
+  srt: { label: '字幕', exts: ['.srt'], maxBytes: 2 * 1024 * 1024, accept: '.srt,text/plain' },
 };
 
 export const mediaDir = (kbDir) => path.join(kbDir, 'media');

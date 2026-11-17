@@ -214,31 +214,52 @@ test('视频脚本编辑：系统形象选择器（下拉滚动选中，填入�
   assert.ok(experienceView(s4, cap).includes('可直接在下方填写'), '列表为空时须提示手动填写');
 });
 
-test('视频脚本编辑：7 步分组（基础/人物/人物设置/内容/文字）与新字段', async () => {
+test('视频脚本编辑：7 步分组（基础/人物/人物设置/内容/装饰/文字/美颜）与新字段', async () => {
   const { experienceView } = await import('../src/lib/experience.js');
   const cap = capById('video-script');
   assert.ok(cap, '找不到 video-script');
   const byKey = Object.fromEntries((cap.experience.fields || []).map((f) => [f.key, f]));
-  assert.deepEqual([...new Set(cap.experience.fields.map((f) => f.section))], ['基础', '人物', '人物设置', '内容', '文字'], '步骤须按控制台顺序');
+  assert.deepEqual([...new Set(cap.experience.fields.map((f) => f.section))], ['基础', '人物', '人物设置', '内容', '装饰', '文字', '美颜'], '步骤须按控制台顺序');
   assert.equal(byKey.speed.step, 0.05, '滑块步长（step）不得被步骤分组键覆盖');
   assert.equal(byKey.roleScale.step, 0.1, '滑块步长（step）不得被步骤分组键覆盖');
   assert.equal(byKey.videoFormat.type, 'select');
   assert.deepEqual(byKey.videoFormat.options, [['mp4', 'MP4'], ['webm', 'WebM']]);
   assert.equal(byKey.watermark.type, 'toggle');
-  assert.equal(byKey.watermarkContent.default, 'AIGenerated');
+  assert.equal(byKey.watermarkContent.default, '', '水印内容默认留空（控制台导出默认就是空串）');
   assert.equal(byKey.roleX.type, 'number');
   assert.equal(byKey.roleScale.type, 'slider');
-  assert.equal(byKey.roleScale.default, 1);
+  assert.deepEqual([byKey.roleScale.min, byKey.roleScale.max, byKey.roleScale.default], [0.5, 2, 1], '缩放须按控制台导出 0.5~2');
+  assert.equal(byKey.roleRotate.type, 'slider');
+  assert.deepEqual([byKey.roleRotate.min, byKey.roleRotate.max, byKey.roleRotate.default], [0, 360, 0]);
+  assert.equal(byKey.roleVolume.default, 100);
+  assert.equal(byKey.roleLayer.default, 1);
   assert.equal(byKey.qid.optionsFrom, 'voiceList');
-  assert.equal(byKey.speed.default, 1.25);
-  assert.equal(byKey.volume.default, 200.5);
+  assert.equal(byKey.speed.default, 1, '视频编辑器语速默认 1（控制台导出口径）');
+  assert.equal(byKey.volume.default, 100, '视频编辑器音量默认 100（控制台导出口径）');
   assert.equal(byKey.pitch.default, 0);
+  assert.equal(byKey.subtitleUrls.upload, 'srt', '字幕字段须支持 .srt 上传');
+  assert.equal(byKey.foregroundUrl.upload, 'image');
+  assert.equal(byKey.bgUrl.upload, 'image');
+  assert.equal(byKey.bgmUrl.upload, 'audio');
+  assert.equal(byKey.titleText.type, 'text');
+  assert.equal(byKey.fgText.type, 'text');
+  // 美颜 38 项：表单 key 与平台 beautify 键名一致，默认值与控制台导出一致
+  const beautyKeys = Object.keys(byKey).filter((k) => byKey[k].section === '美颜' && byKey[k].type === 'slider');
+  assert.equal(beautyKeys.length, 38, '美颜须有 38 个滑块');
+  assert.equal(byKey.whitenStrength.default, 0.3);
+  assert.equal(byKey.chinLength.min, -1, '下巴长短范围 -1~1');
+  assert.equal(byKey.chinLength.max, 1);
+  assert.equal(byKey.contrastStrength.default, 0.05);
+  assert.equal(byKey.saturationStrength.default, 0.1);
+  assert.deepEqual(byKey.whitenMode.options, [['0', '偏粉白'], ['1', '偏黄白']]);
+  assert.deepEqual(byKey.smoothMode.options, [['0', '脸部区域磨皮'], ['1', '全局磨皮']]);
   const s = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, avatarOptions: [], voiceOptions: [] };
   const html = experienceView(s, cap);
-  const order = ['基础', '人物', '人物设置', '内容', '文字'].map((n) => html.indexOf(`>${n}</h3>`));
+  const order = ['基础', '人物', '人物设置', '内容', '装饰', '文字', '美颜'].map((n) => html.indexOf(`>${n}</h3>`));
   assert.ok(order.every((i) => i >= 0), '步骤标题须全部渲染');
   assert.ok(order.every((v, i, a) => i === 0 || v > a[i - 1]), '步骤标题须按顺序出现');
   assert.ok(html.includes('exp-step__num'), '步骤标题须带序号');
+  assert.ok(html.includes('导入 JSON'), '视频脚本须有 JSON 导入入口');
 });
 
 test('音色复刻：同意音频独立上传（留空时复用训练音频）', () => {

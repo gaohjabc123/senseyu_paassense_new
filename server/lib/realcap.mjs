@@ -166,40 +166,154 @@ export function buildGreenPreviewBody(p = {}) {
 
 /**
  * 视频合成 param（POST /api/2dvh/v1/material/video/create 的 param 字段，JSON 串）。
- * 依据文档参数表：version 最新 0.0.17；digital_role.face_feature_id 与 url 必填；
- * tts_query.content 不得小于 10 字；subtitle 需 rgba/font_size/font_family；水印文字仅限英文数字。
+ * 键名与结构以 2026-11-17 控制台「视频脚本编辑」导出 JSON（videoScript_2026-11-17_14_23_17.json，
+ * 子沫_校园_站姿 + 发音人「亲和」）为准：
+ *   · 无 bit_rate、tts_config 无 language；digital_role.position 只含 x/y，
+ *     scale/rotation/volume/z_position 与 position 同级；
+ *   · tts_config 默认 speed_ratio 1、volume 100、pitch_offset 0，use_action 固定 false；
+ *     tts_query.use_action 固定 true；audios 固定 []；
+ *   · subtitle 全字段（urls/scale/rgba/font_size/font_family/stroke_width/stroke_rgba/
+ *     background_rgba/opacity/subtitle_max_len/subtitle_cut_by_punc/auto_font_size/
+ *     sub_to_canvas_width_ratio）；无字幕时整个 subtitle 省略；urls 有 1 个时是字符串、无时是 []。
+ *   · 装饰（第二份导出 videoScript_2026-11-17_14_55_34.json 为准）：
+ *     foregrounds/backgrounds/background-musics 均为数组、只在填了链接时出现；
+ *     title 只在文字非空时出现；foreground-texts 只在文字非空时出现；
+ *     effects 只在任一美颜值偏离默认值时出现（38 项 beautify 全量 + whiten_mode/smooth_mode）。
+ * videoName 必填；digital_role.face_feature_id 与 url 必填；tts_query.content 不得小于 10 字；
+ * 水印文字仅限英文数字。
  */
-export function buildVideoCreateParam(p = {}, { qid = '' } = {}) {
+/** 美颜 38 项：[表单 key（= 平台 beautify 键名）, 默认值]；下巴长短范围 -1~1，其余 0~1 */
+export const BEAUTY_DEFAULTS = [
+  ['whitenStrength', 0.3], ['reddenStrength', 0.36], ['smoothStrength', 0.74],
+  ['shrinkRatio', 0.11], ['enlargeRatio', 0], ['smallRatio', 0.1],
+  ['narrowFace', 0], ['roundEyesRatio', 0], ['thinFaceShapeRatio', 0],
+  ['chinLength', 0], ['hairlineHeightRatio', 0], ['appleMusle', 0],
+  ['narrowNoseRatio', 0], ['noseLengthRatio', 0], ['profileRhinoplasty', 0],
+  ['mouthSize', 0], ['philtrumLengthRatio', 0], ['eyeDistanceRatio', 0],
+  ['eyeAngleRatio', 0], ['openCanthus', 0], ['brightEyeStrength', 0],
+  ['removeDarkCircleStrength', 0], ['removeNasolabialFoldsStrength', 0],
+  ['whiteTeeth', 0], ['shrinkCheekbone', 0], ['thinnerHead', 0],
+  ['openExternalCanthus', 0], ['shrinkJawbone', 0], ['shrinkRoundFace', 0],
+  ['shrinkLongFace', 0], ['shrinkGoddessFace', 0], ['shrinkNaturalFace', 0],
+  ['shrinkWholeHead', 0], ['contrastStrength', 0.05], ['saturationStrength', 0.1],
+  ['sharpen', 0], ['clear', 0], ['bokehStrength', 0],
+];
+export function buildVideoCreateParam(p = {}, { qid = '', voice = null, avatarId = null, avatarName = '' } = {}) {
   const lines = nonEmpty(p.lines, '台词内容');
   if (words(lines) < 10) throw fail('INVALID_INPUT', '视频合成的台词至少 10 个字。');
   const subtitleStyle = String(p.subtitle || '底部白字');
   const videoFormat = String(p.videoFormat || 'mp4').toLowerCase() === 'webm' ? 'webm' : 'mp4';
-  const watermarkContent = String(p.watermarkContent || 'AIGenerated').trim() || 'AIGenerated';
-  if (!/^[A-Za-z0-9]+$/.test(watermarkContent)) throw fail('INVALID_INPUT', '水印内容仅限英文数字。');
+  const watermarkContent = String(p.watermarkContent || '').trim();
+  if (watermarkContent && !/^[A-Za-z0-9]+$/.test(watermarkContent)) throw fail('INVALID_INPUT', '水印内容仅限英文数字。');
+  const subtitleUrls = String(p.subtitleUrls || '').split(/\r?\n/).map((s) => s.trim()).filter((s) => /^https?:\/\//.test(s));
   const param = {
     version: '0.0.17',
     video_format: videoFormat,
     resolution: [1080, 1920],
-    bit_rate: 8,
     frame_rate: 25,
     watermark: { show: p.watermark !== '关闭', content: watermarkContent },
     digital_role: {
+      ...(avatarId ? { id: avatarId } : {}),
       face_feature_id: nonEmpty(p.faceFeatureId, '形象 face_feature_id'),
-      name: String(p.faceFeatureId || '').trim(),
+      name: String(avatarName || '').trim() || String(p.faceFeatureId || '').trim(),
       url: nonEmpty(p.modelUrl, '数字人形象 zip 包地址'),
-      position: { x: clampNum(p.roleX, 0, -10000, 10000), y: clampNum(p.roleY, 0, -10000, 10000), scale: clampNum(p.roleScale, 1, 0.1, 10) },
+      position: { x: clampNum(p.roleX, 0, -10000, 10000), y: clampNum(p.roleY, 0, -10000, 10000) },
+      scale: clampNum(p.roleScale, 1, 0.5, 2),
+      rotation: clampNum(p.roleRotate, 0, 0, 360),
+      volume: clampNum(p.roleVolume, 100, 0, 100),
+      z_position: clampInt(p.roleLayer, 1, 0, 100),
     },
-    tts_config: { language: 'zh-CN', pitch_offset: clampNum(p.pitch, 0, -60, 60), speed_ratio: clampNum(p.speed, 1.25, 0.5, 2), volume: clampNum(p.volume, 200.5, 1, 400), ...(qid ? { qid } : {}) },
-    tts_query: { content: lines, ssml: false },
+    tts_config: {
+      ...(qid ? { qid } : {}),
+      ...(voice?.name ? { name: voice.name } : {}),
+      pitch_offset: clampNum(p.pitch, 0, -60, 60),
+      speed_ratio: clampNum(p.speed, 1, 0.5, 2),
+      volume: clampNum(p.volume, 100, 1, 400),
+      ...(voice?.id ? { id: voice.id } : {}),
+      use_action: false,
+    },
+    tts_query: { content: lines, ssml: false, use_action: true },
+    audios: [],
   };
   if (subtitleStyle !== '无字幕') {
     param.subtitle = {
-      scale: 1,
+      // 控制台导出：无字幕文件时 urls 是 []，有 1 个时是字符串（不是数组）
+      urls: subtitleUrls.length === 1 ? subtitleUrls[0] : subtitleUrls,
+      scale: clampNum(p.subtitleScale, 1, 0.5, 2),
       rgba: [255, 255, 255, 255],
-      font_size: 20,
+      font_size: clampInt(p.subtitleFontSize, 20, 1, 200),
       font_family: 'Noto Sans S Chinese Black',
+      stroke_width: clampNum(p.subtitleStrokeWidth, 0, 0, 100),
+      stroke_rgba: [255, 255, 255, 255],
+      background_rgba: [255, 255, 255, 0],
+      opacity: clampNum(p.subtitleOpacity, 1, 0, 1),
+      subtitle_max_len: clampInt(p.subtitleMaxLen, 0, 0, 10000),
+      subtitle_cut_by_punc: p.subtitleCutByPunc === '开启',
+      auto_font_size: p.subtitleAutoFontSize === '开启',
+      sub_to_canvas_width_ratio: clampNum(p.subtitleCanvasRatio, 1, 0, 2),
       ...(subtitleStyle === '顶部标题' ? { position: { x: 540, y: 120 } } : {}),
     };
+  }
+  // 装饰：前景图 / 背景图 / 背景音乐（只在填了链接时出现）
+  const fgUrl = String(p.foregroundUrl || '').trim();
+  if (isHttpUrl(fgUrl)) {
+    const fg = {
+      name: '前景', type: 0, url: fgUrl,
+      rotation: clampNum(p.fgRotate, 0, 0, 360),
+      z_position: 2, cycle: false,
+      start: clampInt(p.fgStart, 0, 0, 3600000),
+      duration: clampInt(p.fgDuration, -1, -1, 3600000),
+    };
+    const fw = Number(p.fgW), fh = Number(p.fgH);
+    if (Number.isFinite(fw) && fw > 0 && Number.isFinite(fh) && fh > 0) {
+      fg.rect = [clampNum(p.fgX, 0, -10000, 10000), clampNum(p.fgY, 0, -10000, 10000), Math.round(fw), Math.round(fh)];
+    }
+    param.foregrounds = [fg];
+  }
+  const bgUrl = String(p.bgUrl || '').trim();
+  if (isHttpUrl(bgUrl)) {
+    param.backgrounds = [{
+      name: '背景', type: 0, url: bgUrl, rect: [0, 0, 1080, 1920],
+      cycle: false, start: clampInt(p.bgStart, 0, 0, 3600000), duration: clampInt(p.bgDuration, -1, -1, 3600000),
+    }];
+  }
+  const bgmUrl = String(p.bgmUrl || '').trim();
+  if (isHttpUrl(bgmUrl)) {
+    param['background-musics'] = [{ url: bgmUrl, volume: clampNum(p.bgmVolume, 100, 0, 100), cycle: p.bgmCycle !== '关闭' }];
+  }
+  // 文字：标题 / 前景文字（只在文字非空时出现）
+  const textStyle = (text, scaleKey, xKey, yKey, rotKey, sizeKey, opKey) => ({
+    text, scale: clampNum(p[scaleKey], 1, 0.5, 2),
+    position: { x: clampNum(p[xKey], 0, -10000, 10000), y: clampNum(p[yKey], 0, -10000, 10000) },
+    rotation: clampNum(p[rotKey], 0, 0, 360),
+    rgba: [255, 255, 255, 255], font_size: clampInt(p[sizeKey], 20, 1, 200),
+    font_family: 'Noto Sans S Chinese Black', stroke_width: 0,
+    stroke_rgba: [255, 255, 255, 255], background_rgba: [255, 255, 255, 0],
+    opacity: clampNum(p[opKey], 1, 0, 1),
+  });
+  const titleText = String(p.titleText || '').trim();
+  if (titleText) param.title = textStyle(titleText, 'titleScale', 'titleX', 'titleY', 'titleRotate', 'titleFontSize', 'titleOpacity');
+  const fgText = String(p.fgText || '').trim();
+  if (fgText) param['foreground-texts'] = [{ ...textStyle(fgText, 'fgTextScale', 'fgTextX', 'fgTextY', 'fgTextRotate', 'fgTextFontSize', 'fgTextOpacity'), z_position: 3 }];
+  // 美颜：任一值偏离默认值才出现 effects（与控制台导出一致：全默认时无 effects 键）
+  const beautify = {};
+  let beautyTouched = false;
+  for (const [key, dflt] of BEAUTY_DEFAULTS) {
+    const v = clampNum(p[key], dflt, key === 'chinLength' ? -1 : 0, 1);
+    beautify[key] = v;
+    if (v !== dflt) beautyTouched = true;
+  }
+  const whitenMode = clampInt(p.whitenMode, 0, 0, 1);
+  const smoothMode = clampInt(p.smoothMode, 0, 0, 1);
+  if (whitenMode !== 0 || smoothMode !== 0) beautyTouched = true;
+  if (beautyTouched) {
+    const ordered = {};
+    for (const [key] of BEAUTY_DEFAULTS) {
+      ordered[key] = beautify[key];
+      if (key === 'whitenStrength') ordered.whiten_mode = whitenMode;
+      if (key === 'smoothStrength') ordered.smooth_mode = smoothMode;
+    }
+    param.effects = { version: '1.0', beautify: ordered };
   }
   return {
     videoName: nonEmpty(p.videoName || p.name, '视频名称').slice(0, 40),

@@ -364,14 +364,20 @@ export function createServer({ cfg = getConfig(), fetchImpl, log = console, db: 
         const modelUrl = String(params.modelUrl || cfg.avatarModelUrl || '').trim();
         // 发音人：表单里选的（下拉/直接输 QID）优先于服务端默认音色
         const scriptQid = String(params.qidInput || '').trim() || String(params.qid || '').trim() || qid;
+        // 发音人名称与平台 id（控制台导出 JSON 里 tts_config 有 name/id）：从缓存的发音人列表里找，找不到就只传 qid
+        let voice = null;
+        if (scriptQid) {
+          try { const v = (await client.voiceList()).find((x) => String(x.qid || '') === scriptQid); if (v) voice = { name: v.materialName || v.voiceName || '', id: v.id ?? null }; } catch { /* 列表拉不到不挡提交 */ }
+        }
+        const buildOpts = { qid: scriptQid, voice, avatarId: params.avatarId || null, avatarName: params.avatarName || '' };
         if (faceFeatureId && modelUrl) {
           await assertVendorQuota(client, 'genVideoDuration', 1, '视频合成');
           // 2.8.0：把服务端已配置的形象值（cfg 回落）也传进请求体，否则留空表单 + 已配置服务端时会抛错
-          const body = buildVideoCreateParam({ ...params, faceFeatureId, modelUrl }, { qid: scriptQid });
+          const body = buildVideoCreateParam({ ...params, faceFeatureId, modelUrl }, buildOpts);
           const taskId = await client.createVideoTask(body);
           return registerTask(taskId, 'video');
         }
-        const param = JSON.parse(buildVideoCreateParam({ ...params, faceFeatureId: faceFeatureId || 'your_face_feature_id', modelUrl: modelUrl || 'https://example.com/avatar.zip' }, { qid: scriptQid }).param);
+        const param = JSON.parse(buildVideoCreateParam({ ...params, faceFeatureId: faceFeatureId || 'your_face_feature_id', modelUrl: modelUrl || 'https://example.com/avatar.zip' }, buildOpts).param);
         return syncJson(param, (faceFeatureId || modelUrl)
           ? '形象信息不完整，未提交到平台：face_feature_id 与形象 zip 包地址两者都要填。'
           : '这份 param 可直接提交到视频合成接口；需要先训练形象（形象复刻），拿到 face_feature_id 与 zip 包地址后填入再提交。');

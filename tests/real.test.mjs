@@ -396,7 +396,7 @@ test('视频脚本：不填形象时返回文档级有效的 param JSON；填了
   assert.equal(param.version, '0.0.17');
   assert.equal(param.digital_role.face_feature_id, 'your_face_feature_id', '未填形象时给占位，不提交');
   assert.equal(param.subtitle.font_size, 20);
-  assert.match(param.watermark.content, /^[A-Za-z0-9]+$/, '水印文字不可用中文');
+  assert.equal(param.watermark.content, '', '水印内容默认留空（控制台导出默认就是空串）');
   assert.ok(!calls.some((c) => c.path === '/api/2dvh/v1/material/video/create'), '未填形象时不应提交');
   calls.length = 0;
   const r2 = await s.post('/api/capability/run', { id: 'video-script', params: {
@@ -426,7 +426,9 @@ test('视频脚本：7 步字段进 param（格式/水印/位置/三滑块/发�
   assert.equal(param.video_format, 'webm');
   assert.equal(param.watermark.show, false);
   assert.equal(param.watermark.content, 'MyMark1');
-  assert.deepEqual(param.digital_role.position, { x: 10, y: -20, scale: 2.5 });
+  assert.deepEqual(param.digital_role.position, { x: 10, y: -20 }, 'position 只含 x/y（控制台导出）');
+  assert.equal(param.digital_role.scale, 2, '缩放 2.5 超出控制台 0.5~2 范围，夹取到 2');
+  assert.equal(param.digital_role.z_position, 1);
   assert.equal(param.tts_config.speed_ratio, 1.5);
   assert.equal(param.tts_config.volume, 300);
   assert.equal(param.tts_config.pitch_offset, -10);
@@ -437,7 +439,8 @@ test('视频脚本：7 步字段进 param（格式/水印/位置/三滑块/发�
     roleScale: 99, speed: 9, volume: 9999, pitch: 999,
   } });
   assert.equal(r2.code, 0, r2.message);
-  assert.deepEqual(r2.data.result.json.digital_role.position, { x: 0, y: 0, scale: 10 });
+  assert.deepEqual(r2.data.result.json.digital_role.position, { x: 0, y: 0 });
+  assert.equal(r2.data.result.json.digital_role.scale, 2, '缩放上限 2（控制台导出）');
   assert.equal(r2.data.result.json.tts_config.speed_ratio, 2);
   assert.equal(r2.data.result.json.tts_config.volume, 400);
   assert.equal(r2.data.result.json.tts_config.pitch_offset, 60);

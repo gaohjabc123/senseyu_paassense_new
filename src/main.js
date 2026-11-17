@@ -726,6 +726,85 @@ function copyExperience() {
   navigator.clipboard.writeText(t).then(() => toast('已复制'), () => toast('复制失败，请手动选择文本复制'));
 }
 
+/** 视频脚本 JSON 下载：把当前结果的 param 存成本地文件（控制台「导出视频合成脚本」的同款文件） */
+function downloadJsonExperience() {
+  const r = state.exp.result;
+  const t = r?.jsonText || (r?.json ? JSON.stringify(r.json, null, 2) : '');
+  if (!t) return toast('没有可下载的 JSON');
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const name = `videoScript_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([t], { type: 'application/json' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast(`已下载 ${name}`);
+}
+
+/** 视频脚本 JSON 导入：把控制台导出的脚本（或本站下载的 JSON）回填表单；缺的字段恢复默认 */
+function importVideoScriptJson(text) {
+  let j;
+  try { j = JSON.parse(text); } catch { return toast('JSON 解析失败，请确认文件是控制台导出的脚本'); }
+  if (!j || typeof j !== 'object' || !j.digital_role || !j.tts_query) return toast('这个 JSON 不是视频合成脚本');
+  const p = {};
+  const set = (k, v) => { if (v !== undefined && v !== null && v !== '') p[k] = v; };
+  set('videoFormat', j.video_format);
+  if (j.watermark) { p.watermark = j.watermark.show === false ? '关闭' : '开启'; set('watermarkContent', j.watermark.content); }
+  const dr = j.digital_role;
+  set('avatarId', dr.id); set('faceFeatureId', dr.face_feature_id); set('avatarName', dr.name); set('modelUrl', dr.url);
+  if (dr.position) { set('roleX', dr.position.x); set('roleY', dr.position.y); }
+  set('roleScale', dr.scale); set('roleRotate', dr.rotation); set('roleVolume', dr.volume); set('roleLayer', dr.z_position);
+  const tc = j.tts_config || {};
+  set('qid', tc.qid); set('pitch', tc.pitch_offset); set('speed', tc.speed_ratio); set('volume', tc.volume);
+  set('lines', j.tts_query.content);
+  if (j.subtitle) {
+    p.subtitle = j.subtitle.position ? '顶部标题' : '底部白字';
+    const urls = j.subtitle.urls;
+    if (typeof urls === 'string') set('subtitleUrls', urls);
+    else if (Array.isArray(urls)) set('subtitleUrls', urls.join('\n'));
+    set('subtitleScale', j.subtitle.scale); set('subtitleFontSize', j.subtitle.font_size);
+    set('subtitleStrokeWidth', j.subtitle.stroke_width); set('subtitleOpacity', j.subtitle.opacity);
+    set('subtitleMaxLen', j.subtitle.subtitle_max_len);
+    if (j.subtitle.subtitle_cut_by_punc !== undefined) p.subtitleCutByPunc = j.subtitle.subtitle_cut_by_punc ? '开启' : '关闭';
+    if (j.subtitle.auto_font_size !== undefined) p.subtitleAutoFontSize = j.subtitle.auto_font_size ? '开启' : '关闭';
+    set('subtitleCanvasRatio', j.subtitle.sub_to_canvas_width_ratio);
+  } else { p.subtitle = '无字幕'; }
+  const fg = (j.foregrounds || [])[0];
+  if (fg) {
+    set('foregroundUrl', fg.url);
+    if (Array.isArray(fg.rect)) { set('fgX', fg.rect[0]); set('fgY', fg.rect[1]); set('fgW', fg.rect[2]); set('fgH', fg.rect[3]); }
+    set('fgRotate', fg.rotation); set('fgStart', fg.start); set('fgDuration', fg.duration);
+  }
+  const bg = (j.backgrounds || [])[0];
+  if (bg) { set('bgUrl', bg.url); set('bgStart', bg.start); set('bgDuration', bg.duration); }
+  const bgm = (j['background-musics'] || [])[0];
+  if (bgm) { set('bgmUrl', bgm.url); set('bgmVolume', bgm.volume); if (bgm.cycle !== undefined) p.bgmCycle = bgm.cycle ? '开启' : '关闭'; }
+  if (j.title) {
+    set('titleText', j.title.text); set('titleScale', j.title.scale);
+    if (j.title.position) { set('titleX', j.title.position.x); set('titleY', j.title.position.y); }
+    set('titleRotate', j.title.rotation); set('titleFontSize', j.title.font_size); set('titleOpacity', j.title.opacity);
+  }
+  const ft = (j['foreground-texts'] || [])[0];
+  if (ft) {
+    set('fgText', ft.text); set('fgTextScale', ft.scale);
+    if (ft.position) { set('fgTextX', ft.position.x); set('fgTextY', ft.position.y); }
+    set('fgTextRotate', ft.rotation); set('fgTextFontSize', ft.font_size); set('fgTextOpacity', ft.opacity);
+  }
+  const b = j.effects?.beautify;
+  if (b) {
+    for (const [k, v] of Object.entries(b)) {
+      if (k === 'whiten_mode') p.whitenMode = String(v);
+      else if (k === 'smooth_mode') p.smoothMode = String(v);
+      else p[k] = v;
+    }
+  }
+  state.exp.params = { ...p };
+  state.exp.result = null; state.exp.error = null;
+  render();
+  toast('已导入脚本 JSON，表单已填好');
+}
+
 /* ================= 环境切换 ================= */
 async function confirmMode() {
   const next = state.mode === 'real' ? 'mock' : 'real';
@@ -836,6 +915,7 @@ const actions = {
   'exp-reset': () => { state.exp.params = {}; state.exp.error = null; render(); },
   'exp-save': saveExperience,
   'exp-copy': copyExperience,
+  'exp-download-json': downloadJsonExperience,
   'exp-recent': (el) => {
     const field = el.dataset.field; const value = el.dataset.value || '';
     if (!field || !value) return;
@@ -962,7 +1042,8 @@ document.addEventListener('input', (ev) => {
     // 系统形象下拉：选一个自动填入编号与模型地址，并重渲染（填文本框、显示所选缩略图）
     if (el.dataset.field === 'avatar') {
       const picked = (state.avatarOptions || []).find((a) => String(a.faceFeatureId || '') === String(el.value || ''));
-      if (picked) { state.exp.params.faceFeatureId = picked.faceFeatureId; state.exp.params.modelUrl = picked.pkgUrl || ''; render(); toast(`已选形象 ${picked.name || ''}，编号与模型地址已填入`); }
+      if (picked) { state.exp.params.faceFeatureId = picked.faceFeatureId; state.exp.params.modelUrl = picked.pkgUrl || ''; state.exp.params.avatarId = picked.id ?? ''; state.exp.params.avatarName = picked.name || ''; render(); toast(`已选形象 ${picked.name || ''}，编号与模型地址已填入`); }
+      else { state.exp.params.avatarId = ''; state.exp.params.avatarName = ''; }
     }
   }
 });
@@ -996,6 +1077,7 @@ document.addEventListener('change', (ev) => {
   }
   if (admin.change(el)) return;
   if (ev.target.dataset?.uploadField) { uploadMediaField(ev.target); ev.target.value = ''; return; }
+  if (ev.target.dataset?.importJson !== undefined) { const f = ev.target.files?.[0]; if (f) f.text().then(importVideoScriptJson).catch(() => toast('读取文件失败')); ev.target.value = ''; return; }
   if (ev.target.id === 'kb-file') { uploadFiles(ev.target.files); ev.target.value = ''; }
 });
 

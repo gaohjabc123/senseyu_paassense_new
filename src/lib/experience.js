@@ -11,6 +11,7 @@ const UPLOAD_ACCEPT = {
   video: 'video/mp4,video/quicktime,.mp4,.mov',
   media: 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,.mp4,.mov',
   doc: 'text/plain,text/markdown,.txt,.md',
+  srt: '.srt,text/plain',
 };
 
 /**
@@ -129,9 +130,14 @@ export function experienceView(s, cap, opts = {}) {
     return `${stepHead}<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${hintText ? `<small class="field-hint" id="${id}-hint">${esc(hintText)}</small>` : ''}</div>`;
   }).join('');
 
+  // 视频脚本：导入控制台导出的 JSON 回填表单（上传文件（.json）的同款入口）
+  const importRow = cap.id === 'video-script'
+    ? `<div class="actions" style="margin-bottom:12px"><label class="btn" for="exp-import-json">导入 JSON</label><input type="file" id="exp-import-json" class="sr-only" accept=".json,application/json" data-import-json tabindex="-1" ${busy ? 'disabled' : ''} /><span class="field-hint">控制台「导出视频合成脚本」的文件，或本站下载的 JSON，都能导回表单。</span></div>`
+    : '';
   const body = `${requiresCard(ex, s.config)}
     <div class="grid-2 exp-grid">
       <div class="card"><div class="card__title"><h2>${esc(ex.dialogTitle || '填写参数')}</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>
+        ${importRow}
         <div class="exp-form-grid">${fields}</div>
         <div class="actions">
           ${ex.dialogTitle
@@ -190,8 +196,11 @@ export function experienceResult(r, cap) {
       ? `<button class="btn" type="button" data-action="exp-copy-qid" data-qid="${esc(r.json.qid)}">复制 QID</button>` : '';
     const qidNote = cap.id === 'voice-clone' && r.mode === 'real' && r.json?.qid
       ? '<p class="field-hint">把这个 QID 发给管理员配到服务端，语音合成就能用这个音色。</p>' : '';
+    // 视频脚本：下载这份 param JSON（控制台「导出视频合成脚本」的同款文件）
+    const dlJson = cap.id === 'video-script'
+      ? `<button class="btn" type="button" data-action="exp-download-json">下载 JSON</button>` : '';
     body = `<pre class="json-block" tabindex="0" aria-label="JSON 结果">${esc(r.jsonText || JSON.stringify(r.json, null, 2))}</pre>
-      ${qidNote}<div class="actions"><button class="btn" type="button" data-action="exp-copy">复制 JSON</button>${qidCopy}${save}</div>`;
+      ${qidNote}<div class="actions"><button class="btn" type="button" data-action="exp-copy">复制 JSON</button>${dlJson}${qidCopy}${save}</div>`;
   } else {
     body = `<div class="text-result">${esc(r.text || '')}</div>
       <div class="actions"><button class="btn" type="button" data-action="exp-copy">复制文本</button>${save}</div>`;

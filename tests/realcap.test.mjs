@@ -71,23 +71,84 @@ test('绿幕预览：图片与视频分流，param 用 snake_case，视频阈值
   assert.equal(JSON.parse(vid.param).green_params_blur_ks, 3);
 });
 
-test('视频合成 param：文档级有效结构，水印文字仅限英文数字', () => {
+test('视频合成 param：控制台导出形状（digital_role 同级字段、TTS 默认 1/100/0、字幕全字段）', () => {
   const { videoName, param } = buildVideoCreateParam({
     name: '第3章', videoName: '第3章-高级效果', lines: '大家好，欢迎来到本章课程。', subtitle: '底部白字',
     faceFeatureId: 'ff_123', modelUrl: 'https://cdn.invalid/avatar.zip',
-  }, { qid: 'qid-test' });
+  }, { qid: 'qid-test', voice: { name: '亲和', id: 3777224 }, avatarId: 4255826, avatarName: '子沫_校园_站姿' });
   assert.equal(videoName, '第3章-高级效果');
   const p = JSON.parse(param);
   assert.equal(p.version, '0.0.17');
+  assert.ok(!('bit_rate' in p), '导出 JSON 无 bit_rate');
+  assert.ok(!('language' in p.tts_config), '导出 JSON 的 tts_config 无 language');
+  // digital_role：position 只含 x/y；scale/rotation/volume/z_position 同级（缺 z_position 平台会报 88103006）
+  assert.deepEqual(p.digital_role.position, { x: 0, y: 0 });
+  assert.equal(p.digital_role.scale, 1);
+  assert.equal(p.digital_role.rotation, 0);
+  assert.equal(p.digital_role.volume, 100);
+  assert.equal(p.digital_role.z_position, 1);
+  assert.equal(p.digital_role.id, 4255826);
+  assert.equal(p.digital_role.name, '子沫_校园_站姿');
   assert.equal(p.digital_role.face_feature_id, 'ff_123');
   assert.equal(p.digital_role.url, 'https://cdn.invalid/avatar.zip');
   assert.equal(p.tts_config.qid, 'qid-test');
+  assert.equal(p.tts_config.name, '亲和');
+  assert.equal(p.tts_config.id, 3777224);
+  assert.equal(p.tts_config.speed_ratio, 1);
+  assert.equal(p.tts_config.volume, 100);
+  assert.equal(p.tts_config.pitch_offset, 0);
+  assert.equal(p.tts_config.use_action, false);
   assert.equal(p.tts_query.content, '大家好，欢迎来到本章课程。');
+  assert.equal(p.tts_query.use_action, true);
+  assert.deepEqual(p.audios, []);
+  assert.deepEqual(p.subtitle.urls, [], '无字幕文件时 urls 是空数组');
   assert.equal(p.subtitle.font_size, 20);
   assert.equal(p.subtitle.font_family, 'Noto Sans S Chinese Black');
-  assert.match(p.watermark.content, /^[A-Za-z0-9]+$/);
+  assert.equal(p.subtitle.subtitle_max_len, 0);
+  assert.equal(p.subtitle.sub_to_canvas_width_ratio, 1);
+  assert.equal(p.watermark.content, '', '水印内容默认留空（控制台导出默认就是空串）');
+  const pMark = JSON.parse(buildVideoCreateParam({ name: '第3章', lines: '大家好，欢迎来到本章课程。', faceFeatureId: 'ff', modelUrl: 'https://cdn.invalid/a.zip', watermarkContent: 'MyMark1' }, {}).param);
+  assert.equal(pMark.watermark.content, 'MyMark1', '非空水印内容原样带入');
+  assert.ok(!('foregrounds' in p) && !('backgrounds' in p) && !('background-musics' in p), '装饰未填时不出现');
+  assert.ok(!('title' in p) && !('foreground-texts' in p) && !('effects' in p), '标题/前景文字/美颜未动时不出现');
   assert.throws(() => buildVideoCreateParam({ lines: '太短', faceFeatureId: 'ff', modelUrl: 'https://cdn.invalid/a.zip' }), /至少 10 个字/);
   assert.throws(() => buildVideoCreateParam({ lines: '这是一段足够长的台词内容。', modelUrl: 'https://cdn.invalid/a.zip' }), /face_feature_id/);
+});
+
+test('视频合成 param：装饰/标题/前景文字/美颜按第二份导出 JSON', () => {
+  const { param } = buildVideoCreateParam({
+    name: '第3章', videoName: '第3章-高级效果',
+    lines: '大家好，欢迎来到本章课程。', subtitle: '底部白字', subtitleUrls: 'https://cdn.invalid/sub.srt',
+    faceFeatureId: 'ff_123', modelUrl: 'https://cdn.invalid/avatar.zip',
+    foregroundUrl: 'https://cdn.invalid/fg.png', fgW: 1024, fgH: 1024,
+    bgUrl: 'https://cdn.invalid/bg.png', bgmUrl: 'https://cdn.invalid/bgm.mp3',
+    titleText: '测试标题', fgText: '前景文字测试', whitenStrength: 0.5,
+  });
+  const p = JSON.parse(param);
+  assert.equal(p.subtitle.urls, 'https://cdn.invalid/sub.srt', '有 1 个字幕链接时 urls 是字符串');
+  assert.equal(p.foregrounds[0].name, '前景');
+  assert.equal(p.foregrounds[0].type, 0);
+  assert.deepEqual(p.foregrounds[0].rect, [0, 0, 1024, 1024]);
+  assert.equal(p.foregrounds[0].z_position, 2);
+  assert.equal(p.foregrounds[0].duration, -1);
+  assert.deepEqual(p.backgrounds[0].rect, [0, 0, 1080, 1920]);
+  assert.equal(p.backgrounds[0].name, '背景');
+  assert.equal(p['background-musics'][0].url, 'https://cdn.invalid/bgm.mp3');
+  assert.equal(p['background-musics'][0].volume, 100);
+  assert.equal(p['background-musics'][0].cycle, true);
+  assert.equal(p.title.text, '测试标题');
+  assert.equal(p['foreground-texts'][0].text, '前景文字测试');
+  assert.equal(p['foreground-texts'][0].z_position, 3);
+  assert.equal(p.effects.version, '1.0');
+  assert.equal(p.effects.beautify.whitenStrength, 0.5);
+  assert.equal(p.effects.beautify.reddenStrength, 0.36, '未动的美颜项取控制台默认值');
+  assert.equal(p.effects.beautify.smoothStrength, 0.74);
+  assert.equal(p.effects.beautify.whiten_mode, 0);
+  assert.equal(p.effects.beautify.smooth_mode, 0);
+  assert.equal(Object.keys(p.effects.beautify).length, 40, '38 项 + whiten_mode + smooth_mode');
+  // 前景宽高留空时不写 rect（平台按图片原始尺寸）
+  const p2 = JSON.parse(buildVideoCreateParam({ name: '第3章', lines: '这是一段足够长的台词内容。', faceFeatureId: 'ff', modelUrl: 'https://cdn.invalid/a.zip', foregroundUrl: 'https://cdn.invalid/fg.png' }).param);
+  assert.ok(!('rect' in p2.foregrounds[0]), '前景宽高留空时不写 rect');
 });
 
 test('直播：未配置形象时报前置条件，不让平台报含糊的错', () => {

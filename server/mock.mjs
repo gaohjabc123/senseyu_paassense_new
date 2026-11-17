@@ -28,7 +28,7 @@ export function createMock({ taskMs = 1400 } = {}) {
             ...params,
             faceFeatureId: String(params.faceFeatureId || '').trim() || 'your_face_feature_id',
             modelUrl: String(params.modelUrl || '').trim() || 'https://example.com/avatar.zip',
-          }, { qid: String(params.qidInput || '').trim() || String(params.qid || '').trim() }).param);
+          }, { qid: String(params.qidInput || '').trim() || String(params.qid || '').trim(), avatarId: params.avatarId || null, avatarName: params.avatarName || '' }).param);
           return { ...base, json: param, jsonText: JSON.stringify(param, null, 2) };
         }
         const j = { ...(ex.mockJson || {}) };
