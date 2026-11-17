@@ -556,6 +556,9 @@ main:focus { outline: none; }
 .img-thumb__remove { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--gray-900); color: #fff; font-size: 13px; line-height: 1; cursor: pointer; padding: 0; }
 
 /* 系统形象选择器（对齐如影控制台“人物选择”）：缩略图网格，点选填入编号与模型地址 */
+.exp-step { margin: 20px 0 2px; padding-top: 14px; border-top: 1px solid var(--gray-200); font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.exp-step:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.exp-step__num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 999px; background: var(--brand-600); color: #fff; font-size: 12px; font-weight: 700; flex: none; }
 .avatar-selected { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--gray-600); }
 .avatar-selected img { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; border: 1px solid var(--gray-200); display: block; background: var(--gray-100); }
 .avatar-picker__empty { padding: 12px; color: var(--gray-500); font-size: 13px; }

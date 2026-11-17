@@ -65,6 +65,8 @@ test('product：全部能力可体验且体验规格完整（都接入）', () =
       assert.ok(f.key && f.label && f.type, `${c.id} 字段定义不完整`);
       assert.ok(['text', 'textarea', 'select', 'number', 'images', 'toggle', 'slider', 'avatarPicker'].includes(f.type), `${c.id} 字段类型非法`);
       if (f.type === 'select' || f.type === 'avatarPicker') assert.ok((Array.isArray(f.options) && f.options.length) || f.optionsFrom, `${c.id} 下拉/选择器缺少选项`);
+      // 滑块步长 step 必须是数字：步骤分组用 section 键，禁止复用 step（曾导致步长被「人物设置」覆盖、2.5 吸附成 2.1）
+      if (f.type === 'slider') assert.ok(typeof f.step === 'number' && f.step > 0, `${c.id} 滑块 ${f.key} 的 step 必须是正数`);
     }
     assert.ok(c.realApi === null || typeof c.realApi === 'string', `${c.id} realApi 定义非法`);
     assert.equal(typeof c.billable, 'boolean');

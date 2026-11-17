@@ -173,20 +173,23 @@ export function buildVideoCreateParam(p = {}, { qid = '' } = {}) {
   const lines = nonEmpty(p.lines, '台词内容');
   if (words(lines) < 10) throw fail('INVALID_INPUT', '视频合成的台词至少 10 个字。');
   const subtitleStyle = String(p.subtitle || '底部白字');
+  const videoFormat = String(p.videoFormat || 'mp4').toLowerCase() === 'webm' ? 'webm' : 'mp4';
+  const watermarkContent = String(p.watermarkContent || 'AIGenerated').trim() || 'AIGenerated';
+  if (!/^[A-Za-z0-9]+$/.test(watermarkContent)) throw fail('INVALID_INPUT', '水印内容仅限英文数字。');
   const param = {
     version: '0.0.17',
-    video_format: 'mp4',
+    video_format: videoFormat,
     resolution: [1080, 1920],
     bit_rate: 8,
     frame_rate: 25,
-    watermark: { show: true, content: 'AIGenerated' },
+    watermark: { show: p.watermark !== '关闭', content: watermarkContent },
     digital_role: {
       face_feature_id: nonEmpty(p.faceFeatureId, '形象 face_feature_id'),
       name: String(p.faceFeatureId || '').trim(),
       url: nonEmpty(p.modelUrl, '数字人形象 zip 包地址'),
-      position: { x: 0, y: 0, scale: 1.0 },
+      position: { x: clampNum(p.roleX, 0, -10000, 10000), y: clampNum(p.roleY, 0, -10000, 10000), scale: clampNum(p.roleScale, 1, 0.1, 10) },
     },
-    tts_config: { language: 'zh-CN', pitch_offset: 0, speed_ratio: 1, volume: 100, ...(qid ? { qid } : {}) },
+    tts_config: { language: 'zh-CN', pitch_offset: clampNum(p.pitch, 0, -60, 60), speed_ratio: clampNum(p.speed, 1.25, 0.5, 2), volume: clampNum(p.volume, 200.5, 1, 400), ...(qid ? { qid } : {}) },
     tts_query: { content: lines, ssml: false },
   };
   if (subtitleStyle !== '无字幕') {

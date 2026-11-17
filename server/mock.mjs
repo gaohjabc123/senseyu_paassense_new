@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { capById } from '../src/lib/capabilities.js';
 import { E } from './lib/errors.mjs';
+import { buildVideoCreateParam } from './lib/realcap.mjs';
 import { TASK_STATUS_TEXT } from './lib/ruying.mjs';
 
 const ASSETS = path.resolve(import.meta.dirname, 'mock', 'assets');
@@ -21,6 +22,15 @@ export function createMock({ taskMs = 1400 } = {}) {
       case 'audio': return { ...base, audioUrl: FILE('mock_tts.mp3'), durationMs: Math.max(1200, Math.round((words(params.text || '') / 3.8) * 1000)) };
       case 'image': return { ...base, imageUrl: FILE('mock_portrait.png') };
       case 'json': {
+        if (cap.id === 'video-script') {
+          // 演示环境也按表单实时出 param（与真实环境同一份 buildVideoCreateParam，只填占位形象）
+          const param = JSON.parse(buildVideoCreateParam({
+            ...params,
+            faceFeatureId: String(params.faceFeatureId || '').trim() || 'your_face_feature_id',
+            modelUrl: String(params.modelUrl || '').trim() || 'https://example.com/avatar.zip',
+          }, { qid: String(params.qidInput || '').trim() || String(params.qid || '').trim() }).param);
+          return { ...base, json: param, jsonText: JSON.stringify(param, null, 2) };
+        }
         const j = { ...(ex.mockJson || {}) };
         for (const f of ex.fields || []) {
           if (['text', 'textarea'].includes(f.type) && params[f.key] && !j[f.key]) j[f.key] = String(params[f.key]).slice(0, 60);

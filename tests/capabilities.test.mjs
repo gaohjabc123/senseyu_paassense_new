@@ -214,6 +214,33 @@ test('视频脚本编辑：系统形象选择器（下拉滚动选中，填入�
   assert.ok(experienceView(s4, cap).includes('可直接在下方填写'), '列表为空时须提示手动填写');
 });
 
+test('视频脚本编辑：7 步分组（基础/人物/人物设置/内容/文字）与新字段', async () => {
+  const { experienceView } = await import('../src/lib/experience.js');
+  const cap = capById('video-script');
+  assert.ok(cap, '找不到 video-script');
+  const byKey = Object.fromEntries((cap.experience.fields || []).map((f) => [f.key, f]));
+  assert.deepEqual([...new Set(cap.experience.fields.map((f) => f.section))], ['基础', '人物', '人物设置', '内容', '文字'], '步骤须按控制台顺序');
+  assert.equal(byKey.speed.step, 0.05, '滑块步长（step）不得被步骤分组键覆盖');
+  assert.equal(byKey.roleScale.step, 0.1, '滑块步长（step）不得被步骤分组键覆盖');
+  assert.equal(byKey.videoFormat.type, 'select');
+  assert.deepEqual(byKey.videoFormat.options, [['mp4', 'MP4'], ['webm', 'WebM']]);
+  assert.equal(byKey.watermark.type, 'toggle');
+  assert.equal(byKey.watermarkContent.default, 'AIGenerated');
+  assert.equal(byKey.roleX.type, 'number');
+  assert.equal(byKey.roleScale.type, 'slider');
+  assert.equal(byKey.roleScale.default, 1);
+  assert.equal(byKey.qid.optionsFrom, 'voiceList');
+  assert.equal(byKey.speed.default, 1.25);
+  assert.equal(byKey.volume.default, 200.5);
+  assert.equal(byKey.pitch.default, 0);
+  const s = { exp: { running: false, params: {}, error: null, result: null }, recent: {}, config: {}, avatarOptions: [], voiceOptions: [] };
+  const html = experienceView(s, cap);
+  const order = ['基础', '人物', '人物设置', '内容', '文字'].map((n) => html.indexOf(`>${n}</h3>`));
+  assert.ok(order.every((i) => i >= 0), '步骤标题须全部渲染');
+  assert.ok(order.every((v, i, a) => i === 0 || v > a[i - 1]), '步骤标题须按顺序出现');
+  assert.ok(html.includes('exp-step__num'), '步骤标题须带序号');
+});
+
 test('音色复刻：同意音频独立上传（留空时复用训练音频）', () => {
   const cap = capById('voice-clone');
   assert.ok(cap, '找不到 voice-clone');

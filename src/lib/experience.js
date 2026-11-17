@@ -60,7 +60,16 @@ export function experienceView(s, cap, opts = {}) {
   const g = groupOf(cap.group);
   const e = s.exp;
   const busy = e.running;
+  // 步骤分组（如影控制台的纵向步骤：基础 / 人物 / 人物设置 / 内容 / 装饰 / 文字 / 美颜）：
+  // 字段带 step 时，在步骤切换处插一个带序号的分组标题；不带 step 的能力不受影响。
+  const stepNames = [];
+  let curStep = null;
   const fields = (ex.fields || []).map((f) => {
+    let stepHead = '';
+    if (f.section) {
+      if (!stepNames.includes(f.section)) stepNames.push(f.section);
+      if (f.section !== curStep) { stepHead = `<h3 class="exp-step"><span class="exp-step__num">${stepNames.indexOf(f.section) + 1}</span>${esc(f.section)}</h3>`; curStep = f.section; }
+    }
     const id = `exp-${f.key}`;
     const val = e.params[f.key] ?? f.default ?? '';
     const maxAttr = f.maxLength && f.type !== 'select' && f.type !== 'toggle' ? `maxlength="${Number(f.maxLength)}"` : '';
@@ -117,7 +126,7 @@ export function experienceView(s, cap, opts = {}) {
       ? `<span class="default-avatar"><img src="${esc(s.config.avatarImageUrl)}" class="default-avatar-thumb" alt="服务端默认形象图" /><button class="btn btn--sm btn--ghost" type="button" data-action="exp-default-avatar" data-field="imageUrl" data-value="${esc(s.config.avatarImageUrl)}" ${busy ? 'disabled' : ''}>使用默认形象图</button></span>` : '';
     const extras = [recentChip, defaultAvatar].filter(Boolean).join('');
     const hintText = f.key === 'qid' && s.voiceListFailed ? '发音人列表加载失败，可直接输入 QID 或用默认音色' : f.hint;
-    return `<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${hintText ? `<small class="field-hint" id="${id}-hint">${esc(hintText)}</small>` : ''}</div>`;
+    return `${stepHead}<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${hintText ? `<small class="field-hint" id="${id}-hint">${esc(hintText)}</small>` : ''}</div>`;
   }).join('');
 
   const body = `${requiresCard(ex, s.config)}

@@ -414,6 +414,39 @@ test('视频脚本：不填形象时返回文档级有效的 param JSON；填了
   assert.equal(t.data.result.videoUrl, 'https://cdn.invalid/v2.mp4');
 });
 
+test('视频脚本：7 步字段进 param（格式/水印/位置/三滑块/发音人；演示环境按表单实时出 JSON）', async () => {
+  const r = await s.post('/api/capability/run', { id: 'video-script', params: {
+    name: '第3章', lines: '大家好，欢迎来到本章课程。', subtitle: '底部白字',
+    videoFormat: 'webm', watermark: '关闭', watermarkContent: 'MyMark1',
+    roleX: 10, roleY: -20, roleScale: 2.5, qid: 'qid-voice-1', speed: 1.5, volume: 300, pitch: -10,
+  } });
+  assert.equal(r.code, 0, r.message);
+  assert.equal(r.data.sync, true);
+  const param = r.data.result.json;
+  assert.equal(param.video_format, 'webm');
+  assert.equal(param.watermark.show, false);
+  assert.equal(param.watermark.content, 'MyMark1');
+  assert.deepEqual(param.digital_role.position, { x: 10, y: -20, scale: 2.5 });
+  assert.equal(param.tts_config.speed_ratio, 1.5);
+  assert.equal(param.tts_config.volume, 300);
+  assert.equal(param.tts_config.pitch_offset, -10);
+  assert.equal(param.tts_config.qid, 'qid-voice-1');
+  // 越界值夹取到接口范围；水印中文应报清楚的错
+  const r2 = await s.post('/api/capability/run', { id: 'video-script', params: {
+    name: '第3章', lines: '大家好，欢迎来到本章课程。', subtitle: '底部白字',
+    roleScale: 99, speed: 9, volume: 9999, pitch: 999,
+  } });
+  assert.equal(r2.code, 0, r2.message);
+  assert.deepEqual(r2.data.result.json.digital_role.position, { x: 0, y: 0, scale: 10 });
+  assert.equal(r2.data.result.json.tts_config.speed_ratio, 2);
+  assert.equal(r2.data.result.json.tts_config.volume, 400);
+  assert.equal(r2.data.result.json.tts_config.pitch_offset, 60);
+  const bad = await s.post('/api/capability/run', { id: 'video-script', params: {
+    name: '第3章', lines: '大家好，欢迎来到本章课程。', subtitle: '底部白字', watermarkContent: '水印中文',
+  } });
+  assert.equal(bad.code, 'INVALID_INPUT');
+});
+
 test('知识库管理：真实模式下载文档存进服务端知识库，问答能命中', async () => {
   calls.length = 0;
   const r = await s.post('/api/capability/run', { id: 'nlp-kb', params: {
