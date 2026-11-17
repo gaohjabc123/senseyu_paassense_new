@@ -513,7 +513,7 @@ export const SCENARIOS = [
 export const INTEGRATION_STEPS = [
   { n: '01', title: '注册与获取凭据', desc: '在如影 PaaS 控制台创建应用，取得 APP_ID / APP_KEY，凭据只保存在服务端。' },
   { n: '02', title: '换取 Token', desc: '服务端用 MD5(appId + timestamp + appKey) 签名换取 Token，自动缓存与提前刷新。' },
-  { n: '03', title: '调用能力接口', desc: '按能力目录选择接口，提交异步任务并轮询状态；计费路径有白名单保护。' },
+  { n: '03', title: '调用能力接口', desc: '按能力矩阵选择接口，提交异步任务并轮询状态；计费路径有白名单保护。' },
   { n: '04', title: '取回成果并发布', desc: '下载成片/音频，按规定添加「AI生成」显式标识后对外发布。' },
 ];
 

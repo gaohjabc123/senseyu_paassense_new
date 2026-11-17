@@ -221,3 +221,17 @@ test('去重：能力矩阵是唯一浏览入口（推荐顺序并进来），�
   const nav = sidenav({ view: 'home', me: null, works: [] });
   assert.ok(nav.includes('data-view="capabilities"') && !nav.includes('data-view="catalog"'), '侧边栏只留能力矩阵，不留能力目录');
 });
+
+test('创作中心五个快捷入口：后两个嵌通用体验器（与能力矩阵同一套表单）', async () => {
+  const { createView } = await import('../src/lib/views.js');
+  const freshExp = (capId) => ({ capId, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null });
+  const base = { me: { access: { modules: ['video-image', 'voice-tts', 'nlp-chat', 'video-tts', 'video-script'] } }, voiceOptions: [], config: null, recent: {} };
+  const html = createView({ ...base, createTab: 'textvideo', exp: freshExp('video-tts') });
+  assert.equal((html.match(/data-create="/g) || []).length, 5, '快捷入口应为五个');
+  assert.ok(html.includes('data-create="textvideo"') && html.includes('data-create="script"'), '须有文本驱动视频与视频脚本编辑两个新入口');
+  assert.ok(html.includes('口播文案') && html.includes('生成视频'), '文本驱动视频页应嵌 video-tts 的表单');
+  assert.ok(!html.includes('exp-crumb'), '嵌在标签页里时不应重复显示面包屑');
+  const script = createView({ ...base, createTab: 'script', exp: freshExp('video-script') });
+  assert.ok(script.includes('脚本名称') && script.includes('生成脚本 JSON'), '视频脚本编辑页应嵌 video-script 的表单');
+  assert.ok(script.includes('上面五个是常用的快捷入口'), '全部能力卡的文案应与入口数一致');
+});

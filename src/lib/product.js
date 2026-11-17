@@ -96,8 +96,8 @@ export const ORG_TYPES = [
   { id: 'university', label: '本科院校', hint: '通识课与课程助教' },
 ];
 export const orgTypeLabel = (id) => ORG_TYPES.find((t) => t.id === id)?.label || '企业';
-/** 创作中心三条快捷链路依赖的能力模块（与服务端 SHORTCUT_MODULE 一致） */
-export const SHORTCUT_MODULE = { video: 'video-image', voice: 'voice-tts', chat: 'nlp-chat' };
+/** 创作中心五条快捷链路依赖的能力模块（video/voice/chat 与服务端一致；textvideo/script 走通用能力通道） */
+export const SHORTCUT_MODULE = { video: 'video-image', voice: 'voice-tts', chat: 'nlp-chat', textvideo: 'video-tts', script: 'video-script' };
 
 /** 环境说明（全站统一口径） */
 export const MODE_NOTICE = {

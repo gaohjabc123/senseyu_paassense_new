@@ -5,6 +5,7 @@ import { GROUPS, CAPABILITIES, SCENARIOS, INTEGRATION_STEPS, GUIDED_PATH, capsOf
 import { backLabelFor } from './navstack.js';
 import { INTERPRET, TOUR_STEPS } from './guide.js';
 import { EXPERIENCES, estimateSeconds } from './wizard.js';
+import { experienceView } from './experience.js'; // 创作中心后两个快捷入口嵌通用体验器（experience.js 只在调用时用 views 的 errorBlock，循环引用安全）
 import { esc, words } from './html.js';
 
 /* ============ 通用片段 ============ */
@@ -302,7 +303,7 @@ export function overviewView(s) {
       <div class="card"><div class="card__title"><h2>快速开始</h2></div>
         <div class="quick-list">${EXPERIENCES.filter((e) => canUse(s, SHORTCUT_MODULE[e.id])).map((e) => `
           <button class="quick-item" type="button" data-experience="${e.id}"><span class="quick-item__icon" aria-hidden="true">${e.icon}</span>
-            <span><b>${esc(e.name)}</b><small>${esc(e.desc)}</small></span></button>`).join('') || '<p class="muted">你的企业没有开通创作中心的快捷能力，可以在能力目录里查看已开通的能力。</p>'}</div></div>
+            <span><b>${esc(e.name)}</b><small>${esc(e.desc)}</small></span></button>`).join('') || '<p class="muted">你的企业没有开通创作中心的快捷能力，可以在<a href="#capabilities" data-view="capabilities">能力矩阵</a>里查看已开通的能力。</p>'}</div></div>
       <div class="card"><div class="card__title"><h2>我的额度</h2></div>
         ${quotaCardHtml(s)}</div>
     </div>
@@ -381,13 +382,16 @@ export function createView(s) {
   const tabs = EXPERIENCES.filter((e) => canUse(s, SHORTCUT_MODULE[e.id]));
   // 全部能力不再这里重复列一遍胶囊：能力矩阵是唯一的浏览入口，这里只留一个跳转
   const allCaps = `<div class="card"><div class="card__title"><h2>全部能力</h2><span class="pill pill--info">${CAPABILITIES.length} 项</span></div>
-    <p class="muted">上面三个是常用的快捷入口；全部 ${CAPABILITIES.length} 项能力按 6 大类列在能力矩阵里，点一下直接去体验。</p>
+    <p class="muted">上面五个是常用的快捷入口；全部 ${CAPABILITIES.length} 项能力按 6 大类列在能力矩阵里，点一下直接去体验。</p>
     <a class="btn btn--primary btn--sm" href="#capabilities" data-view="capabilities">去能力矩阵查看全部 ${CAPABILITIES.length} 项能力</a></div>`;
   if (!tabs.length) return `<div class="console"><div class="card">${emptyState('创作中心没有可用的快捷入口', '你的企业没有开通视频口播、语音合成或知识库问答。可以在能力矩阵里查看已开通的能力。', '<a class="btn btn--primary btn--sm" href="#capabilities" data-view="capabilities">打开能力矩阵</a>')}</div>${allCaps}</div>`;
   const active = tabs.some((e) => e.id === s.createTab) ? s.createTab : tabs[0].id;
+  const tab = EXPERIENCES.find((e) => e.id === active);
+  // 带 cap 的快捷入口嵌通用体验器（与能力矩阵体验页同一套表单与提交链路）
+  const panel = active === 'video' ? videoPanel(s) : active === 'voice' ? voicePanel(s) : active === 'chat' ? kbPanel(s) : experienceView(s, capById(tab?.cap || ''), { embedded: true });
   return `<div class="console">
     <div class="create-tabs" role="tablist" aria-label="创作类型">${tabs.map((e) => `<button class="create-tab ${active === e.id ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active === e.id}" data-create="${e.id}"><span aria-hidden="true">${e.icon}</span> ${esc(e.name)}</button>`).join('')}</div>
-    <div role="tabpanel">${active === 'video' ? videoPanel(s) : active === 'voice' ? voicePanel(s) : kbPanel(s)}</div>
+    <div role="tabpanel">${panel}</div>
     ${allCaps}
   </div>`;
 }

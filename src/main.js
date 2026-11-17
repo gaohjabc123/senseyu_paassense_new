@@ -4,7 +4,7 @@
 import './style.css';
 import { PRODUCT, DEFAULT_VIEW, SITE_VIEWS, navById, SHORTCUT_MODULE } from './lib/product.js';
 import { TOUR_STEPS, nextTourStep, shouldShowTour, markTourDone } from './lib/guide.js';
-import { validateText, estimateSeconds, stageLabel } from './lib/wizard.js';
+import { validateText, estimateSeconds, stageLabel, EXPERIENCES, expTabCap } from './lib/wizard.js';
 import { api, ApiError, getMode, setMode, pollTask, uploadKb, uploadMedia, chatStream, toApiError } from './lib/api.js';
 import { listWorks, addWork, removeWork, renameWork, clearWorks } from './lib/works.js';
 import { capById } from './lib/capabilities.js';
@@ -233,8 +233,9 @@ function applyRoute() {
   }
   if (r.view === 'tasks' || r.view === 'overview') reloadWorks().then((changed) => { if (changed && state.view === r.view && !state.dialog) render(); });
   if (r.view === 'create' && state.me) {
-    const allowed = ['video', 'voice', 'chat'].filter((k) => V.canUse(state, SHORTCUT_MODULE[k]));
+    const allowed = EXPERIENCES.filter((e) => V.canUse(state, SHORTCUT_MODULE[e.id])).map((e) => e.id);
     if (allowed.length && !allowed.includes(state.createTab)) state.createTab = allowed[0];
+    enterExpTab(state.createTab);
   }
   if ((r.view === 'overview' && V.canUse(state, SHORTCUT_MODULE.chat)) || (r.view === 'create' && state.createTab === 'chat')) loadKb();
   if ((r.view === 'experience' && r.capId === 'voice-tts') || r.view === 'create') loadVoiceList();
@@ -531,6 +532,19 @@ function collectExpParams() {
   return params;
 }
 
+/** 切到嵌通用体验器的快捷入口时，把 exp 状态切到对应能力（已是该能力时保留表单与结果） */
+function enterExpTab(tabId) {
+  const cap = expTabCap(tabId);
+  if (!cap) return;
+  if (state.exp.capId !== cap) {
+    state.exp.abort?.abort();
+    state.exp = { capId: cap, params: {}, running: false, stage: '', queued: false, startedAt: 0, taskId: null, error: null, result: null, abort: null };
+  }
+}
+
+/** 通用体验器当前是否可见：体验页，或创作中心里正嵌着它的那个标签页 */
+const expVisible = () => state.view === 'experience' || (state.view === 'create' && expTabCap(state.createTab) === state.exp.capId);
+
 async function runExperience() {
   const e = state.exp;
   const cap = capById(e.capId);
@@ -544,14 +558,14 @@ async function runExperience() {
     e.running = false;
     rememberResult(cap.id, e.result);
     const expAutoSaved = await autoSaveExperience();
-    if (state.view === 'experience') { render(); document.getElementById('exp-result-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (expVisible()) { render(); document.getElementById('exp-result-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
     if (expAutoSaved) toast('已自动保存到我的作品');
   } catch (err) {
     e.running = false;
     e.error = err?.name === 'AbortError'
       ? new ApiError({ message: '已停止等待。', hint: `任务仍在继续处理（编号 ${e.taskId}），需要时可以继续等待结果。`, action: 'resume' })
       : toApiError(err);
-    renderIf('experience');
+    if (expVisible()) render();
   }
 }
 
@@ -563,7 +577,7 @@ async function pollExperience() {
       endpoint: 'capability/task', mode: state.mode, signal: ctrl.signal, startedAt: e.startedAt,
       onProgress: ({ status, queued }) => {
         const stage = stageLabel(status, queued);
-        if (stage !== e.stage || queued !== e.queued) { e.stage = stage; e.queued = queued; renderIf('experience'); }
+        if (stage !== e.stage || queued !== e.queued) { e.stage = stage; e.queued = queued; if (expVisible()) render(); }
       },
     });
   } finally { e.abort = null; }
@@ -575,7 +589,7 @@ async function resumeExperience() {
   Object.assign(e, { running: true, error: null, startedAt: Date.now() });
   render(); startTicker();
   try { e.result = await pollExperience(); } catch (err) { e.error = err?.name === 'AbortError' ? null : toApiError(err); }
-  e.running = false; rememberResult(e.capId, e.result); renderIf('experience');
+  e.running = false; rememberResult(e.capId, e.result); if (expVisible()) render();
 }
 
 /** 记住这次的结果（只记真实环境）：下次进表单一点就能填上 */
@@ -849,9 +863,10 @@ document.addEventListener('click', (ev) => {
   if (d.group) { state.capFilter = d.group; return go('capabilities'); }
   if (d.filter) { state.capFilter = d.filter; return render(); }
   if (d.use) { return go(`experience/${d.use}`); }
-  if (d.experience) { state.createTab = d.experience; return go('create'); }
+  if (d.experience) { state.createTab = d.experience; enterExpTab(d.experience); return go('create'); }
   if (d.create) {
     state.createTab = d.create;
+    enterExpTab(d.create);
     if (d.create === 'chat') loadKb();
     if (d.create !== 'video') state.tour = -1;
     render();

@@ -24,7 +24,7 @@ test('wizard：文案校验、时长估算、阶段文案', () => {
   assert.equal(estimateSeconds('一二三四五六七八九十'), 2.6);
   assert.equal(stageLabel(1, true), '平台排队中');
   assert.equal(stageLabel(2), '生成中');
-  assert.deepEqual(EXPERIENCES.map((e) => e.id), ['video', 'voice', 'chat']);
+  assert.deepEqual(EXPERIENCES.map((e) => e.id), ['video', 'voice', 'chat', 'textvideo', 'script']);
 });
 
 test('works：保存 / 读取 / 删除 / 7 天过期 / 文本类作品', async () => {

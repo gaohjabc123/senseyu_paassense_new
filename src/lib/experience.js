@@ -51,7 +51,11 @@ function requiresCard(ex, cfg) {
     }).join('')}</ol></div>`;
 }
 
-export function experienceView(s, cap) {
+/**
+ * 通用能力体验器。opts.embedded=true 时只返回主体内容（不带外壳与面包屑），
+ * 供创作中心快捷入口嵌在标签页里复用：表单、提交、轮询、结果与体验页是同一套。
+ */
+export function experienceView(s, cap, opts = {}) {
   const ex = cap.experience || {};
   const g = groupOf(cap.group);
   const e = s.exp;
@@ -104,9 +108,7 @@ export function experienceView(s, cap) {
     return `<div class="form-field"><label for="${id}">${f.required ? '<span class="req" aria-hidden="true">*</span>' : ''}${esc(f.label)}</label>${row}${extras ? `<div class="exp-field-extra">${extras}</div>` : ''}${hintText ? `<small class="field-hint" id="${id}-hint">${esc(hintText)}</small>` : ''}</div>`;
   }).join('');
 
-  return `<div class="console exp-shell">
-    <nav class="exp-crumb" aria-label="位置"><a href="#capabilities" data-view="capabilities">能力矩阵</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
-    ${requiresCard(ex, s.config)}
+  const body = `${requiresCard(ex, s.config)}
     <div class="grid-2 exp-grid">
       <div class="card"><div class="card__title"><h2>${esc(ex.dialogTitle || '填写参数')}</h2><span class="pill pill--info">输出：${OUTPUT_LABEL[ex.output] || '文本'}</span></div>
         <div class="exp-form-grid">${fields}</div>
@@ -132,7 +134,11 @@ export function experienceView(s, cap) {
     </div>
     ${busy ? `<div class="card">${progressLine(e)}</div>` : ''}
     ${e.error ? `<div class="card">${errorBlock(e.error, { retry: 'exp-run', resume: 'exp-resume' })}</div>` : ''}
-    ${e.result ? experienceResult(e.result, cap) : ''}
+    ${e.result ? experienceResult(e.result, cap) : ''}`;
+  if (opts.embedded) return body;
+  return `<div class="console exp-shell">
+    <nav class="exp-crumb" aria-label="位置"><a href="#capabilities" data-view="capabilities">能力矩阵</a><span aria-hidden="true">/</span><span>${esc(g?.name || '')}</span><span aria-hidden="true">/</span><b aria-current="page">${esc(cap.name)}</b></nav>
+    ${body}
   </div>`;
 }
 
