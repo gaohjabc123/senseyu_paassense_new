@@ -292,6 +292,12 @@ main:focus { outline: none; }
 .quota-bar i { display: block; height: 100%; background: var(--brand-600); transition: width var(--dur-fast); }
 .quota-row--low .quota-bar i { background: #DC2626; }
 .quota-row--low .quota-row__remain b { color: #DC2626; }
+/* 账单用量条：剩余 ≥25% 绿、10%–25% 黄（红档复用 --low） */
+.quota-row--ok .quota-bar i { background: #16A34A; }
+.quota-row--warn .quota-bar i { background: #D97706; }
+.quota-row--warn .quota-row__remain b { color: #D97706; }
+/* 账单查询状态行：空时不占位，查询中才显示一行小字 */
+.bill-status:empty { display: none; }
 .quota-row__meta { font-size: 12px; color: var(--gray-500); }
 .quota-row__warn { color: #DC2626; font-weight: 600; }
 .quota-note { margin-top: var(--sp-3); font-size: 12px; }

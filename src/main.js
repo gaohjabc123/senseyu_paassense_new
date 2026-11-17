@@ -529,7 +529,24 @@ async function loadBill() {
   const b = state.bill;
   if (b.loading) return;
   b.loading = true; b.error = null;
-  if (state.view === 'bill') render();
+  // 不整页 render：就地禁用查询按钮（文案保持“查询”不变）并写一行“查询中…”；
+  // 取数回来只 render 一次，否则演示环境瞬间返回时整卡连翻两次、看着闪烁。
+  // 首次进页时 applyRoute 会在 loadBill 之后 render，按钮按 loading 态直接画成禁用，不受影响。
+  const btn = viewRoot.querySelector('[data-action="bill-query"]');
+  if (btn) {
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    if (!btn.querySelector('.spinner')) {
+      const sp = document.createElement('span');
+      sp.className = 'spinner';
+      sp.setAttribute('aria-hidden', 'true');
+      btn.prepend(sp);
+    }
+  }
+  const csvBtn = viewRoot.querySelector('[data-action="bill-csv"]');
+  if (csvBtn) csvBtn.disabled = true;
+  const statusEl = viewRoot.querySelector('[data-bill-status]');
+  if (statusEl) statusEl.textContent = '查询中…';
   try {
     const d = await api.bill.list({ tab: b.tab, from: b.from, to: b.to, statRange: b.statRange, algoSubType1: b.algoSubType1, algoSubType2: b.algoSubType2 });
     b.rows = d.rows || []; b.usedSum = d.usedSum ?? null; b.pagination = d.pagination || null;

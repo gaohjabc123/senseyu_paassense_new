@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, SUPER, superClient, setupTenant, fund } from './helpers.mjs';
-import { liveTestView, multiTestView, billView, liveScriptsView } from '../src/lib/views.js';
+import { liveTestView, multiTestView, billView, billUsageHtml, quotaLevel, liveScriptsView } from '../src/lib/views.js';
 
 // 最小可用的直播脚本 JSON（控制台「导出直播脚本」的形状）
 const LIVE_SCRIPT = JSON.stringify({
@@ -371,6 +371,95 @@ test('视图：账单页 9 个页签齐全，展示当前 algoGroup（探测未�
   assert.ok(html.includes('algoGroup'), '账单页须展示当前 algoGroup');
   assert.ok(html.includes('本地导出 CSV'), '账单须有本地导出 CSV 按钮');
   assert.ok(html.includes('发送邮箱'), '账单须有发送邮箱按钮');
+});
+
+const billState = (tab = 'video', over = {}) => ({
+  mode: 'mock',
+  me: null,
+  bill: { tab, from: '2026-11-01', to: '2026-11-17', statRange: '1', algoSubType1: '', algoSubType2: '', rows: [], usedSum: null, pagination: null, note: '', algoGroup: 1, loading: false, error: null, loaded: true, ...over },
+});
+
+test('用量档位：剩余 ≥25% 绿、10%–25% 黄、<10% 或已超 红，总量 0 不分档', () => {
+  assert.equal(quotaLevel(0.62, 20), 'ok', '视频合成 0.62/20 剩余 96.9% 应为绿');
+  assert.equal(quotaLevel(15, 20), 'ok', '剩余正好 25% 应为绿');
+  assert.equal(quotaLevel(15.1, 20), 'warn', '剩余 24.5% 应为黄');
+  assert.equal(quotaLevel(18, 20), 'warn', '剩余正好 10% 应为黄');
+  assert.equal(quotaLevel(18.1, 20), 'low', '剩余 9.5% 应为红');
+  assert.equal(quotaLevel(149.4, 120), 'low', '图片数字人 149.4/120 已超应为红');
+  assert.equal(quotaLevel(0, 0), 'none', '总量 0 不分档');
+});
+
+test('视图：账单查询加载态不闪烁——按钮文案永远是“查询”，有旧行留旧行，无行只一行小字', () => {
+  const rows = [{ id: 'bill_demo_1', billingDate: '2026-11-17', taskName: '演示账单行（样例）', algoType: 14, algoSubType1: '', algoSubType2: '', billingValue: 0.62, billingUnit: 1, startTime: '2026-10-19 10:00:00', endTime: '2026-10-19 10:00:37', status: 5 }];
+  const loadingWithRows = billView(billState('video', { loading: true, rows }));
+  assert.match(loadingWithRows, /data-action="bill-query"[^>]*disabled/, '加载中查询按钮须禁用');
+  assert.ok(loadingWithRows.includes('查询</button>'), '按钮文案永远是“查询”');
+  assert.ok(!loadingWithRows.includes('查询中…</button>'), '按钮文案不得变成“查询中…”');
+  assert.ok(loadingWithRows.includes('class="spinner"'), '加载态按钮里用 spinner 表现');
+  assert.ok(loadingWithRows.includes('bill_demo_1'), '加载中有旧行时留着旧行，不闪白');
+  assert.ok(!loadingWithRows.includes('正在查询账单'), '不得整块换成 loadingBlock');
+  const loadingEmpty = billView(billState('video', { loading: true }));
+  assert.ok(loadingEmpty.includes('data-bill-status'), '无行加载时表区上方有一行查询中小字');
+  assert.ok(loadingEmpty.includes('查询中…'), '无行加载时显示“查询中…”');
+  assert.ok(!loadingEmpty.includes('正在查询账单'), '无行加载时也不换成 loadingBlock');
+  const idle = billView(billState());
+  assert.ok(idle.includes('查询</button>'), '空闲时按钮文案也是“查询”');
+  assert.ok(!idle.includes('class="spinner"'), '空闲时按钮里没有 spinner');
+});
+
+test('视图：账单用量条——演示环境只用实测样例数字并标样例，无口径页签不编条', () => {
+  const video = billUsageHtml(billState());
+  assert.ok(video.includes('quota-row--ok'), '视频合成 0.62/20 剩余充足应为绿');
+  assert.ok(video.includes('已用 0.62 / 共 20 分钟'), '视频合成用量按实测样例展示');
+  assert.ok(video.includes('剩余 <b>19.38</b> 分钟'), '视频合成剩余 19.38 分钟');
+  assert.ok(video.includes('样例数据'), '演示用量条须标样例');
+  const img = billUsageHtml(billState('image-avatar'));
+  assert.ok(img.includes('quota-row--low'), '图片数字人 149.4/120 已超应为红');
+  assert.ok(img.includes('已用 149.4 / 共 120 秒'), '图片数字人用量按实测样例展示');
+  assert.ok(img.includes('已超量'), '已超量须明示');
+  const edit = billUsageHtml(billState('image-edit'));
+  assert.ok(edit.includes('未开通'), '图片编辑总量 0 显示未开通');
+  assert.ok(!edit.includes('quota-bar'), '未开通不画进度条');
+  const tts = billUsageHtml(billState('tts'));
+  assert.ok(!tts.includes('quota-row'), '声音合成无总量口径，不编用量条');
+  assert.ok(tts.includes('按调用计费，无总量口径'), '声音合成如实说明无总量口径');
+  const multi = billUsageHtml(billState('multi'));
+  assert.ok(!multi.includes('quota-row'), '视频互动直播无实测样例数字，不编用量条');
+});
+
+test('视图：账单用量条——真实环境按 quota 来源展示，租户映射不到的页签如实写没有', () => {
+  const vendor = billState('video', {});
+  vendor.mode = 'real';
+  vendor.me = { user: { id: 'u1' }, quota: { kind: 'vendor', items: [
+    { key: 'genVideoDuration', label: '视频合成', unit: '分钟', allocated: 20, used: 16, remaining: 4 },
+    { key: 'genImageVideoDuration', label: '图片数字人', unit: '秒', allocated: 120, used: 149.4, remaining: -29.4 },
+  ], low: ['genImageVideoDuration'] } };
+  const vHtml = billUsageHtml(vendor);
+  assert.ok(vHtml.includes('quota-row--warn'), '厂商视频合成剩余 20% 应为黄');
+  assert.ok(vHtml.includes('数据来源：厂商实时额度'), '真实环境须注明厂商实时额度');
+  vendor.bill.tab = 'tts';
+  assert.ok(!billUsageHtml(vendor).includes('quota-row'), '厂商声音合成也没有总量口径');
+  const tenant = billState('video', {});
+  tenant.mode = 'real';
+  tenant.me = { user: { id: 'u2' }, quota: { kind: 'tenant', items: {
+    video_seconds: { allocated: 3600, used: 900, remaining: 2700 },
+    tts_chars: { allocated: 10000, used: 9500, remaining: 500 },
+    api_calls: { allocated: 100, used: 10, remaining: 90 },
+  }, low: ['tts_chars'] } };
+  const tHtml = billUsageHtml(tenant);
+  assert.ok(tHtml.includes('quota-row--ok'), '租户视频时长剩余 75% 应为绿');
+  assert.ok(tHtml.includes('数据来源：内部台账'), '租户须注明内部台账');
+  tenant.bill.tab = 'tts';
+  const ttsHtml = billUsageHtml(tenant);
+  assert.ok(ttsHtml.includes('quota-row--low'), '租户语音合成剩余 5% 应为红');
+  tenant.bill.tab = 'avatar';
+  const noMap = billUsageHtml(tenant);
+  assert.ok(!noMap.includes('quota-row'), '租户映射不到的页签不硬凑用量条');
+  assert.ok(noMap.includes('内部台账只有视频时长'), '租户映射不到的页签如实说明只有三项计量');
+  const noQuota = billState('video', {});
+  noQuota.mode = 'real';
+  noQuota.me = { user: { id: 'u3' }, quota: null };
+  assert.ok(billUsageHtml(noQuota).includes('暂时无法获取额度信息'), '真实环境拿不到额度时如实提示，不拿样例充数');
 });
 
 test('视图：互动直播管理两个页签齐全，脚本库空态说明“文档里没有脚本接口”', () => {

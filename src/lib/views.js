@@ -728,6 +728,76 @@ export function multiTestView(s) {
     </div></div></div></div>`;
 }
 
+/** 账单用量档位：剩余 ≥25% 绿、10%–25% 黄、<10% 或已超 红；红档口径与总览“我的额度”卡的 low（剩余 <10%）一致 */
+export function quotaLevel(used, allocated) {
+  if (!allocated || allocated <= 0) return 'none';
+  const remainRatio = (allocated - used) / allocated;
+  if (remainRatio < 0.1) return 'low';
+  if (remainRatio < 0.25) return 'warn';
+  return 'ok';
+}
+
+/** 账单页签 → 厂商实时额度键（server/lib/ruying.mjs 的 resource() 返回键名）；声音合成与 ASR 合成按调用计费，无总量口径 */
+const BILL_QUOTA_VENDOR = {
+  avatar: 'genCharModel', video: 'genVideoDuration', live: 'liveDuration',
+  multi: 'videoInteractiveLive', 'voice-model': 'genTtsCharVoiceModel',
+  'image-avatar': 'genImageVideoDuration', 'image-edit': 'genEditImage',
+};
+/** 账单页签 → 租户内部台账计量键；只有这三项，映射不到的页签如实写没有 */
+const BILL_QUOTA_TENANT = { video: 'video_seconds', tts: 'tts_chars' };
+/** 演示环境样例额度：只用控制台实测过的数字，不编；没有实测数字的页签不在这里 */
+const BILL_DEMO_QUOTA = {
+  video: { label: '视频合成', used: 0.62, allocated: 20, unit: '分钟' },
+  'image-avatar': { label: '图片数字人', used: 149.4, allocated: 120, unit: '秒' },
+  avatar: { label: '人物形象模型', used: 0, allocated: 3, unit: '个' },
+  'voice-model': { label: '个人音色模型', used: 0, allocated: 3, unit: '个' },
+  live: { label: '互动直播', used: 0, allocated: 100, unit: '分钟' },
+  'image-edit': { label: 'AI 图片编辑', used: 0, allocated: 0, unit: '个' },
+};
+
+/** 账单页用量展示：当前页签的已用 / 共 / 剩余 + 进度条（绿黄红三色）。查询账单时不新增接口调用，复用启动时已加载的 s.me.quota */
+export function billUsageHtml(s) {
+  const tab = s.bill.tab;
+  let item = null;
+  let source = '';
+  if (s.mode === 'real') {
+    const q = s.me?.quota;
+    if (!s.me?.user || !q?.items) return '<p class="hint-block">暂时无法获取额度信息，请稍后刷新重试。</p>';
+    if (Array.isArray(q.items)) {
+      const key = BILL_QUOTA_VENDOR[tab];
+      const found = key ? q.items.find((it) => it.key === key) : null;
+      if (found) { item = found; source = '厂商实时额度'; }
+      else if (tab === 'tts' || tab === 'asr') return '<p class="hint-block">声音合成与 ASR 合成按调用计费，无总量口径，合计用量见下方表格。</p>';
+      else return '<p class="hint-block">当前页签在额度数据里没有对应的计量口径。</p>';
+    } else {
+      const meter = BILL_QUOTA_TENANT[tab];
+      const m = meter ? q.items[meter] : null;
+      if (m) { item = { label: QUOTA_LABELS[meter].label, unit: QUOTA_LABELS[meter].unit, ...m }; source = '内部台账'; }
+      if (!item) return '<p class="hint-block">内部台账只有视频时长、语音合成字数、其他能力调用三项计量，当前页签没有对应的额度口径。</p>';
+    }
+  } else {
+    const demo = BILL_DEMO_QUOTA[tab];
+    if (!demo) return '<p class="hint-block">演示环境：当前页签没有实测的样例额度数字，不编用量条。声音合成与 ASR 合成按调用计费，无总量口径，合计用量见下方表格。</p>';
+    item = demo;
+    source = '样例';
+  }
+  const level = quotaLevel(item.used, item.allocated);
+  if (level === 'none') {
+    return `<div class="quota-row"><div class="quota-row__head"><b>${esc(item.label)}用量</b><span class="quota-row__remain">未开通</span></div>
+      <div class="quota-row__meta">当前页签对应的额度总量为 0，未开通。</div></div>`;
+  }
+  const pct = Math.min(100, Math.max(0, Math.round((item.used / item.allocated) * 100)));
+  const remain = Math.round((item.allocated - item.used) * 100) / 100;
+  const levelText = level === 'ok' ? '剩余充足' : level === 'warn' ? '剩余不多，请留意' : (item.used > item.allocated ? '已超量，请联系管理员追加' : '即将用完，请联系管理员追加');
+  const srcNote = source === '样例' ? '样例数据（演示环境），以如影控制台为准' : `数据来源：${source}`;
+  return `<div class="quota-row quota-row--${level}">
+      <div class="quota-row__head"><b>${esc(item.label)}用量</b>
+        <span class="quota-row__remain">剩余 <b>${remain}</b> ${esc(item.unit)}</span></div>
+      <div class="quota-bar" role="img" aria-label="${esc(item.label)}已用 ${pct}%"><i style="width:${pct}%"></i></div>
+      <div class="quota-row__meta">已用 ${item.used} / 共 ${item.allocated} ${esc(item.unit)} · ${levelText} · ${srcNote}</div>
+    </div>`;
+}
+
 /** 账单：控制台 /company/bill/bill 的 9 个页签 + 日期范围 + 本地导出 CSV + 发送邮箱（mailto）。
  * algoGroup 用服务端可配置常量（默认 1）；第一轮探测 count 0 未定论，页面只展示接口返回，不写“无数据”的定性。 */
 export function billView(s) {
@@ -761,15 +831,17 @@ export function billView(s) {
         <option value="">全部</option>${['PAAS_HTTP', 'PAAS_WS', 'PAAS_VIDEO_2D', 'PAAS_VIDEO_MIX', 'PAAS_LIVE'].map((v) => `<option value="${v}" ${b.algoSubType1 === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label>服务资源 <select class="input" data-bind="bill.algoSubType2" aria-label="服务资源">
         <option value="">全部</option>${(b.tab === 'tts' ? ['TTS3', 'TTS4', 'TTS5', 'TTS7', 'TTS8'] : ['ASR5']).map((v) => `<option value="${v}" ${b.algoSubType2 === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` : ''}
-      <button class="btn btn--primary btn--sm" type="button" data-action="bill-query" ${b.loading ? 'disabled aria-busy="true"' : ''}>${b.loading ? '查询中…' : '查询'}</button>
+      <button class="btn btn--primary btn--sm" type="button" data-action="bill-query" ${b.loading ? 'disabled aria-busy="true"' : ''}>${b.loading ? '<span class="spinner" aria-hidden="true"></span>' : ''}查询</button>
       <button class="btn btn--sm" type="button" data-action="bill-csv" ${b.loading || !(b.rows || []).length ? 'disabled' : ''}>本地导出 CSV</button>
       <button class="btn btn--sm" type="button" data-action="bill-mailto" ${!(b.rows || []).length ? 'disabled' : ''}>发送邮箱</button>
     </div>
     ${b.note ? `<div class="alert alert--info" role="note"><div class="alert__body"><p>${esc(b.note)}</p></div></div>` : ''}
     ${b.error ? errorBlock(b.error, { retry: 'bill-query' }) : ''}
-    ${b.loading && !(b.rows || []).length ? loadingBlock('正在查询账单…')
-      : (b.rows || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">账单日期</th><th scope="col">任务/账单ID</th><th scope="col">任务名称</th><th scope="col">algoType</th><th scope="col">来源</th><th scope="col">服务资源</th><th scope="col">用量</th><th scope="col">单位</th><th scope="col">开始时间</th><th scope="col">结束时间</th><th scope="col">状态</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${billUsageHtml(s)}
+    <p class="muted bill-status" data-bill-status role="status">${b.loading ? '查询中…' : ''}</p>
+    ${(b.rows || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">账单日期</th><th scope="col">任务/账单ID</th><th scope="col">任务名称</th><th scope="col">algoType</th><th scope="col">来源</th><th scope="col">服务资源</th><th scope="col">用量</th><th scope="col">单位</th><th scope="col">开始时间</th><th scope="col">结束时间</th><th scope="col">状态</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="hint-block">共 ${b.pagination?.count ?? b.rows.length} 条${b.usedSum !== null && b.usedSum !== undefined ? ` · 合计用量 ${esc(String(b.usedSum))}` : ''}（用量与单位按平台原值展示，单位口径以平台为准）。</p>`
+      : b.loading ? ''
       : emptyState('没有查到账单记录', '换一个日期范围或页签再查；如果控制台里明明有账单而这里是空的，很可能是 algoGroup 取值不对（正在探测），不是没有数据。', '')}
     <p class="hint-block">「发送邮箱」会打开你的邮箱客户端（mailto），由你自己发送，本站不代发邮件、不保存收件人。</p>
   </div></div>`;
