@@ -30,7 +30,6 @@ export const NAV_SECTIONS = [
   {
     id: 'site', label: '产品', items: [
       { id: 'home', label: '首页', icon: '⌂' },
-      { id: 'capabilities', label: '能力矩阵', icon: '◈' },
       { id: 'scenarios', label: '应用场景', icon: '◎' },
       { id: 'integration', label: '接入指南', icon: '⇄' },
     ],
@@ -38,6 +37,8 @@ export const NAV_SECTIONS = [
   {
     id: 'console', label: '工作台', items: [
       { id: 'overview', label: '总览', icon: '▦' },
+      // 能力矩阵是干活的入口（找能力 → 点体验），放在工作台里：总览 → 矩阵 → 创作 → 任务 → 作品
+      { id: 'capabilities', label: '能力矩阵', icon: '◈' },
       { id: 'create', label: '创作中心', icon: '✦' },
       { id: 'taskcenter', label: '任务中心', icon: '☰' },
       { id: 'tasks', label: '我的作品', icon: '▤' },
@@ -83,7 +84,11 @@ export function navFor(role, { isSchool = false } = {}) {
 
 export const ALL_NAV = [...NAV_SECTIONS, TEACH_NAV, SCHOOL_ORG_NAV, ADMIN_NAV, ACCOUNT_NAV].flatMap((s) => s.items.map((i) => ({ ...i, section: s.id, sectionLabel: s.label })));
 export const navById = (id) => ALL_NAV.find((n) => n.id === id);
-export const SITE_VIEWS = NAV_SECTIONS[0].items.map((i) => i.id);
+/**
+ * 站内自带标题的页面（不显示工作台标题栏，用自己的 page-head）。
+ * 注意：这是渲染方式，与导航分组无关——能力矩阵导航上在工作台里，渲染仍是站内页。
+ */
+export const SITE_VIEWS = ['home', 'capabilities', 'scenarios', 'integration'];
 export const DEFAULT_VIEW = 'home';
 export const ROLE_LABEL = { super_admin: '超级管理员', tenant_admin: '企业管理员', teacher: '教师', member: '成员' };
 export const SCHOOL_ROLE_LABEL = { super_admin: '超级管理员', tenant_admin: '学校管理员', teacher: '教师', member: '学生' };

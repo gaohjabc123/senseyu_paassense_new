@@ -1,7 +1,7 @@
 // product.test.mjs —— 产品化数据层与视图一致性测试
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PRODUCT, NAV_SECTIONS, navById, DEFAULT_VIEW, MODE_NOTICE, BRAND_LOGOS } from '../src/lib/product.js';
+import { PRODUCT, NAV_SECTIONS, SITE_VIEWS, navById, DEFAULT_VIEW, MODE_NOTICE, BRAND_LOGOS } from '../src/lib/product.js';
 import { GROUPS, CAPABILITIES, SCENARIOS, INTEGRATION_STEPS, capsOf, readyCaps, capById, groupOf, stats } from '../src/lib/capabilities.js';
 
 test('product：品牌与导航结构完整', () => {
@@ -122,4 +122,13 @@ test('导航去重：能力目录已并进能力矩阵', () => {
   assert.ok(!ids.includes('catalog'), '导航里不应再有能力目录');
   assert.ok(ids.includes('capabilities'), '能力矩阵仍在导航里');
   assert.equal(navById('catalog'), undefined, '旧的 catalog 路由不应再被识别为导航项');
+});
+
+test('能力矩阵在工作台区：总览之后，产品区只剩对外介绍', () => {
+  const site = NAV_SECTIONS.find((s) => s.id === 'site').items.map((i) => i.id);
+  const consoleIds = NAV_SECTIONS.find((s) => s.id === 'console').items.map((i) => i.id);
+  assert.deepEqual(site, ['home', 'scenarios', 'integration'], '产品区只剩首页、应用场景、接入指南');
+  assert.deepEqual(consoleIds, ['overview', 'capabilities', 'create', 'taskcenter', 'tasks', 'settings'], '工作台动线是总览 → 矩阵 → 创作 → 任务 → 作品 → 环境与配置');
+  assert.equal(navById('capabilities').section, 'console', '能力矩阵的导航分组应是工作台');
+  assert.ok(SITE_VIEWS.includes('capabilities'), '能力矩阵渲染仍是站内页（自带标题，不显示工作台标题栏）');
 });
