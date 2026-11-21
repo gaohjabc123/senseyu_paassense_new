@@ -91,7 +91,15 @@ export function errorBlock(err, { retry = '', resume = '' } = {}) {
 
 const spinner = '<span class="spinner" aria-hidden="true"></span>';
 /** 加载块；tipKey 非空时在行内留一个等待提示位（由每秒走字的 ticker 按 WAIT_TIPS 档位填文案） */
-export function loadingBlock(text, tipKey = '') { return `<div class="loading" role="status">${spinner}<span>${esc(text)}</span>${tipKey ? ` <span data-wait-tip="${tipKey}"></span>` : ''}</div>`; }
+export function loadingBlock(text, tipKey = '', variant = 'spinner') {
+  if (variant === 'skeleton') {
+    // 骨架屏：装饰块对读屏隐藏，文字说明保留在 sr-only 里；rows 控制行数
+    return `<div class="loading loading--skeleton" role="status" aria-busy="true"><span class="sr-only">${esc(text)}</span><div aria-hidden="true"><span class="skeleton skeleton--line" style="width:38%"></span><span class="skeleton skeleton--row"></span><span class="skeleton skeleton--row"></span><span class="skeleton skeleton--row"></span></div></div>`;
+  }
+  return `<div class="loading" role="status">${spinner}<span>${esc(text)}</span>${tipKey ? ` <span data-wait-tip="${tipKey}"></span>` : ''}</div>`;
+}
+/** 列表/整页首次加载用骨架屏的简写 */
+export const skeletonBlock = (text) => loadingBlock(text, '', 'skeleton');
 const fmtElapsed = (ms) => { const s = Math.floor(ms / 1000); return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`; };
 
 /** 进行中的任务：阶段、已等待时间、平台排队提示、停止等待；等待提示位由 ticker 按档位填文案 */
@@ -465,7 +473,7 @@ function kbPanel(s) {
   const c = s.chat;
   const docs = k.docs;
   const docList = !k.loaded
-    ? (k.loadError ? errorBlock(k.loadError, { retry: 'kb-reload' }) : loadingBlock('正在读取知识库…'))
+    ? (k.loadError ? errorBlock(k.loadError, { retry: 'kb-reload' }) : skeletonBlock('正在读取知识库…'))
     : docs.length
       ? `<ul class="doc-list">${docs.map((d) => `<li class="doc-item"><div><b>${esc(d.name)}</b><span class="muted">${d.chars.toLocaleString()} 字 · ${d.chunkCount} 个片段</span></div>
           <button class="btn btn--sm" type="button" data-kb-del="${d.id}" ${k.deleting === d.id ? 'disabled' : ''} aria-label="删除资料：${esc(d.name)}">${k.deleting === d.id ? '删除中…' : '删除'}</button></li>`).join('')}</ul>`
@@ -569,7 +577,7 @@ export function taskCenterView(s) {
       <button class="btn btn--sm" type="button" data-action="taskcenter-search">搜索</button>
     </div>
     ${tc.error ? errorBlock(tc.error, { retry: 'taskcenter-refresh' }) : ''}
-    ${tc.loading && !tc.list.length ? loadingBlock('正在读取任务…')
+    ${tc.loading && !tc.list.length ? skeletonBlock('正在读取任务…')
       : tc.list.length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">任务编号</th><th scope="col">能力</th><th scope="col">任务名</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col">结果</th><th scope="col">操作</th></tr></thead><tbody>${rows}</tbody></table></div>`
       : emptyState('还没有任务', '在创作中心或能力体验里生成一次，结果就会出现在这里。', '<a class="btn btn--primary btn--sm" href="#create" data-view="create">去创作中心</a>')}
     <p class="hint-block">共 ${tc.total} 条${(tc.list || []).some((t) => t.status === 1 || t.status === 2) ? '；未完成的任务每 15 秒自动刷新一次状态，跑完自动停。' : '。'}</p></div></div>`;
@@ -593,7 +601,7 @@ export function liveTestView(s) {
     ${step(1, '创建直播间', '创建即开始计时', `
       <div class="form-field"><label for="livetest-name">直播间名称</label><input class="input" id="livetest-name" data-bind="livetest.name" value="${esc(t.name)}" maxlength="64" /></div>
       <div class="form-field"><label for="livetest-script-file">直播脚本 JSON</label>
-        <input type="file" id="livetest-script-file" accept=".json,application/json" data-livetest-file />
+        <label class="dropzone" for="livetest-script-file"><input class="sr-only" type="file" id="livetest-script-file" accept=".json,application/json" data-livetest-file /><b>点击选择直播脚本 JSON</b><span>支持 liveScript_*.json</span></label>
         <p class="field-hint">上传控制台「导出直播脚本」的文件（liveScript_*.json）；本站只取其中第一场景的播报文案与发音人创建直播间。${t.scriptFileName ? `已选：${esc(t.scriptFileName)}` : '未选文件。'}</p>
         ${t.scriptText ? `<p class="field-hint">脚本播报内容：${esc(t.scriptText.slice(0, 80))}${t.scriptText.length > 80 ? '…' : ''}</p>` : ''}</div>
       <div class="actions"><button class="btn btn--primary" type="button" data-action="livetest-create" ${dis(t.scriptJson && !t.busy)}>${t.busy === 'create' ? '创建中…' : '点击创建'}</button></div>
@@ -675,7 +683,7 @@ export function multiTestView(s) {
     ${step(1, '创建', '上传 JSON + 开始创建', `
       <div class="form-field"><label for="multitest-name">直播间名称</label><input class="input" id="multitest-name" data-bind="multitest.name" value="${esc(t.name)}" maxlength="64" /></div>
       <div class="form-field"><label for="multitest-script-file">脚本 JSON</label>
-        <input type="file" id="multitest-script-file" accept=".json,application/json" data-multitest-file />
+        <label class="dropzone" for="multitest-script-file"><input class="sr-only" type="file" id="multitest-script-file" accept=".json,application/json" data-multitest-file /><b>点击选择脚本 JSON</b><span>支持装修脚本 JSON</span></label>
         <p class="field-hint">上传装修脚本 JSON（控制台第一步上传的文件）；${t.scriptFileName ? `已选：${esc(t.scriptFileName)}` : '未选文件（可不传，只填播放列表也能创建）。'}</p></div>
       <div class="form-field"><label for="multitest-materials">播放列表素材 ID（每行一个）</label><textarea class="editor" id="multitest-materials" data-bind="multitest.materialIds" rows="3" placeholder="mat_xxx&#10;mat_yyy">${esc(t.materialIds || '')}</textarea>
         <p class="field-hint">装修任务产出的 materialId，素材状态须为 FINISHED 才能用来创建直播。</p></div>
@@ -874,17 +882,17 @@ export function liveScriptsView(s) {
     ${ls.tab === 'sessions' ? `<div class="card"><div class="card__title"><h2>直播会话</h2>
         <button class="btn btn--sm" type="button" data-action="livescripts-reload" ${ls.loading ? 'disabled aria-busy="true"' : ''}>${ls.loading ? '刷新中…' : '刷新'}</button></div>
       <p class="hint-block">平台没有直播会话列表接口，这里只列本站创建过的直播会话（直播内测、超级直播间 Pro、视频互动直播）；${esc(ls.note || '')}</p>
-      ${ls.loading && !(ls.sessions || []).length ? loadingBlock('正在读取会话…')
+      ${ls.loading && !(ls.sessions || []).length ? skeletonBlock('正在读取会话…')
         : (ls.sessions || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">名称</th><th scope="col">类型</th><th scope="col">会话编号</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">结束时间</th><th scope="col">直播时长</th><th scope="col">结束原因</th></tr></thead><tbody>${sessRows}</tbody></table></div>`
         : emptyState('还没有直播会话', '在「直播内测」或「视频互动直播测试」里创建一次直播间，这里就会出现记录。', '<a class="btn btn--primary btn--sm" href="#livetest" data-view="livetest">去直播内测</a>')}
     </div>` : `<div class="card"><div class="card__title"><h2>脚本库</h2>
         <button class="btn btn--sm" type="button" data-action="livescripts-reload" ${ls.loading ? 'disabled aria-busy="true"' : ''}>${ls.loading ? '刷新中…' : '刷新'}</button></div>
       <p class="hint-block">文档里没有互动直播脚本的创建 / 查询 / 列表接口，脚本不是平台独立资源（装修脚本随装修任务提交，接管脚本随接管队列提交）。本站用自己的脚本库保存直播脚本编辑器出的脚本；分享链接打开即进编辑器并载入该脚本。</p>
-      ${ls.loading && !(ls.scripts || []).length ? loadingBlock('正在读取脚本库…')
+      ${ls.loading && !(ls.scripts || []).length ? skeletonBlock('正在读取脚本库…')
         : (ls.scripts || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">名称</th><th scope="col">来源</th><th scope="col">创建时间</th><th scope="col">操作</th></tr></thead><tbody>${scriptRows}</tbody></table></div>`
         : emptyState('脚本库还是空的', '在「直播脚本编辑」里编好脚本后点「保存到脚本库」，或在这里上传脚本 JSON。', '<a class="btn btn--primary btn--sm" href="#experience/live-script" data-view="experience">去直播脚本编辑</a>')}
       <div class="form-field"><label for="livescripts-upload">上传脚本 JSON 到脚本库</label>
-        <input type="file" id="livescripts-upload" accept=".json,application/json" data-livescripts-file />
+        <label class="dropzone" for="livescripts-upload"><input class="sr-only" type="file" id="livescripts-upload" accept=".json,application/json" data-livescripts-file /><b>点击选择脚本 JSON</b><span>支持 liveScript_*.json，按文件名存进脚本库</span></label>
         <p class="field-hint">上传控制台导出的直播脚本（liveScript_*.json），按文件名存进脚本库。</p></div>
     </div>`}
   </div>`;
@@ -892,7 +900,7 @@ export function liveScriptsView(s) {
 
 export function settingsView(s) {
   const cfg = s.config;
-  if (!cfg) return `<div class="console">${s.configError ? errorBlock(s.configError, { retry: 'reload-config' }) : loadingBlock('正在读取环境配置…')}</div>`;
+  if (!cfg) return `<div class="console">${s.configError ? errorBlock(s.configError, { retry: 'reload-config' }) : skeletonBlock('正在读取环境配置…')}</div>`;
   const real = isReal(s);
   const t = s.token;
   const yes = (v, a = '已配置', b = '未配置') => (v ? `<span class="ok">${a}</span>` : `<span class="muted">${b}</span>`);

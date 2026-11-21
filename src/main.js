@@ -8,13 +8,15 @@ import { validateText, estimateSeconds, stageLabel, EXPERIENCES, expTabCap } fro
 import { api, ApiError, getMode, setMode, pollTask, uploadKb, uploadMedia, chatStream, toApiError, estimateProgress } from './lib/api.js';
 import { listWorks, addWork, removeWork, renameWork, clearWorks } from './lib/works.js';
 import { createConsent, consentDialogHtml } from './lib/consent.js';
+import { setFieldError } from './lib/fields.js';
+import { initUi, askConfirm, askPrompt, askDialogHtml, isAskOpen, cancelAsk, acceptAsk } from './lib/ui.js';
 import { capById } from './lib/capabilities.js';
 import { words } from './lib/html.js';
 import * as V from './lib/views.js';
 import { experienceView, NEXT_STEPS } from './lib/experience.js';
 import { loadRecent, saveRecent, extractRecent } from './lib/recent.js';
 import { routeKey, pushNav, popNav } from './lib/navstack.js';
-import { initialAdminState, parseAdminHash, renderAdminRoute, ADMIN_ROUTES, credentialDialog, createAdminController } from './lib/admin.js';
+import { initialAdminState, parseAdminHash, renderAdminRoute, ADMIN_ROUTES, credentialDialog, createAdminController, liveValidate } from './lib/admin.js';
 
 const SAMPLE_TEXT = '新款智能手表今天上市，支持全天心率监测、睡眠分析与运动记录，轻巧续航七天，欢迎到店体验。';
 const MAX_UPLOAD_BYTES = 1024 * 1024;
@@ -144,6 +146,7 @@ function render() {
     : state.dialog?.type === 'mode' ? V.modeDialog(state)
     : state.dialog?.type === 'work' ? V.workDialog(state.dialog.work)
     : state.dialog?.type === 'consent' ? consentDialogHtml(state.dialog.title, state.dialog.lines)
+    : state.dialog?.type === 'confirm' || state.dialog?.type === 'prompt' ? askDialogHtml(state.dialog)
       : state.tour >= 0 ? V.tourCard(state.tour) : '';
 
   if (focusId) {
@@ -154,6 +157,19 @@ function render() {
   if (nb && chatAtBottom) nb.scrollTop = nb.scrollHeight;
   if (state.dialog) overlayRoot.querySelector('[data-autofocus]')?.focus();
   if (state.tour >= 0) highlightTour();
+  reapplyFieldErrors();
+}
+
+initUi({ setDialog: (d) => { state.dialog = d; }, clearDialog: () => { state.dialog = null; }, getDialog: () => state.dialog, render });
+
+const touched = new Set();           // 已经失焦过的字段 id（没碰过的字段不提前报错）；须声明在 render() 首次调用之前
+
+/** 整页重渲染会清掉行内错误：把"已碰过"的字段按当前 state 重新校验一遍并挂回去（不聚焦、不滚动） */
+function reapplyFieldErrors() {
+  if (!touched.size) return;
+  const kinds = new Set();
+  for (const id of touched) { const el = document.getElementById(id); if (el?.dataset?.validate) kinds.add(el.dataset.validate); }
+  for (const k of kinds) { const r = liveValidate(k, state); if (!r) continue; for (const id of r.ids) if (touched.has(id) && document.getElementById(id)) setFieldError(document, id, r.errors[id] || ''); }
 }
 
 /** 只在用户正在看对应页面时才重渲染（避免后台轮询打断正在播放的音视频或正在输入的内容） */
@@ -162,13 +178,65 @@ function renderIf(view, tab) {
 }
 
 /* ================= 提示 ================= */
-function toast(msg) {
-  const root = document.getElementById('toast-root');
-  const el = document.createElement('div');
-  el.className = 'toast'; el.textContent = msg;
-  root.appendChild(el);
-  setTimeout(() => el.remove(), 2800);
+/* Toast 关闭与悬停暂停用事件委托（#toast-root 常驻，不随视图重绘销毁），
+   比逐条挂监听更可靠：直接挂在动态创建的按钮上时，若节点被重建监听会丢。 */
+function toastCloseEl(el) {
+  if (!el || el.classList.contains('is-leaving')) return;
+  el.classList.add('is-leaving');
+  clearTimeout(el._toastTimer);
+  setTimeout(() => el.remove(), 170);
 }
+function toastHoldEl(el) { if (el) clearTimeout(el._toastTimer); }
+function toastReleaseEl(el) {
+  if (!el || el.classList.contains('is-leaving')) return;
+  clearTimeout(el._toastTimer);
+  el._toastTimer = setTimeout(() => toastCloseEl(el), 1800);
+}
+function toast(msg, kind) {
+  const root = document.getElementById('toast-root');
+  if (!root) return;
+  const text = String(msg ?? '');
+  // 没显式传类型时，按文案粗判：失败/错误/无法 → err；已…/成功 → ok
+  const k = kind || (/失败|错误|无法|不能|不一致|超时|未能/.test(text) ? 'err' : /^已|成功|完成/.test(text) ? 'ok' : '');
+  const el = document.createElement('div');
+  el.className = `toast${k ? ` toast--${k}` : ''}`;
+  el.setAttribute('role', k === 'err' ? 'alert' : 'status');
+  const span = document.createElement('span'); span.className = 'toast__msg'; span.textContent = text;
+  const x = document.createElement('button'); x.type = 'button'; x.className = 'toast__close'; x.setAttribute('aria-label', '关闭提示'); x.textContent = '×';
+  el.append(span, x);
+  root.appendChild(el);
+  while (root.children.length > 4) root.firstElementChild.remove();           // 最多同时 4 条，防刷屏
+  // 错误停留更久；鼠标悬停/键盘聚焦时不消失（计时器挂在节点上，供委托处理器读写）
+  el._toastTimer = setTimeout(() => toastCloseEl(el), k === 'err' ? 6500 : 3200);
+}
+// #toast-root 上的委托处理器：关闭按钮点击、悬停/聚焦暂停。只注册一次。
+(function initToastDelegation() {
+  const root = document.getElementById('toast-root');
+  if (!root || root._toastDelegated) return;
+  root._toastDelegated = true;
+  root.addEventListener('click', (ev) => {
+    const x = ev.target.closest('.toast__close');
+    if (!x) return;
+    const el = x.closest('.toast');
+    if (el) toastCloseEl(el);
+  });
+  root.addEventListener('mouseover', (ev) => {
+    const el = ev.target.closest('.toast');
+    if (el) toastHoldEl(el);
+  });
+  root.addEventListener('mouseout', (ev) => {
+    const el = ev.target.closest('.toast');
+    if (el && !el.contains(ev.relatedTarget)) toastReleaseEl(el);
+  });
+  root.addEventListener('focusin', (ev) => {
+    const el = ev.target.closest('.toast');
+    if (el) toastHoldEl(el);
+  });
+  root.addEventListener('focusout', (ev) => {
+    const el = ev.target.closest('.toast');
+    if (el && !el.contains(ev.relatedTarget)) toastReleaseEl(el);
+  });
+})();
 function updateWorksBadge() {
   const link = viewRoot.querySelector('.sidenav [data-view="tasks"]');
   if (!link) return;
@@ -793,7 +861,7 @@ async function uploadMediaField(input) {
 
 async function deleteDoc(id) {
   const doc = state.kb.docs.find((d) => d.id === id);
-  if (!doc || !window.confirm(`确认从知识库删除《${doc.name}》？删除后问答将不再引用它。`)) return;
+  if (!doc || !(await askConfirm(`确认从知识库删除《${doc.name}》？删除后问答将不再引用它。`, { title: '删除知识库文档', okText: '删除', danger: true }))) return;
   state.kb.deleting = id; render();
   try { const d = await api.kbDelete(id); state.kb.docs = d.docs; toast('已删除'); } catch (e) { toast(toApiError(e).message); }
   state.kb.deleting = null; renderIf('create', 'chat');
@@ -1178,7 +1246,7 @@ function manageStatus(kind) {
     toast(t.rows.length ? `查到 ${t.rows.length} 条状态` : '平台没有返回这批编号的状态');
   }).catch((e) => { t.error = toApiError(e); }).finally(() => { t.loading = false; render(); });
 }
-function manageDelete(kind) {
+async function manageDelete(kind) {
   const t = state.exp[kind];
   if (!t || t.deleting) return;
   const el = document.getElementById('manage-delete-ids');
@@ -1186,7 +1254,7 @@ function manageDelete(kind) {
   const ids = String(input || '').split(/[\r\n,，]+/).map((s) => s.trim()).filter(Boolean);
   if (!ids.length) { toast('请先填要删除的编号。'); return; }
   const label = kind === 'warming' ? '文件 ID' : '任务编号';
-  if (!window.confirm(`确认删除这 ${ids.length} 个${label}？平台上的预热文件/过渡视频会被删掉，删除后不可恢复。`)) return;
+  if (!(await askConfirm(`确认删除这 ${ids.length} 个${label}？平台上的预热文件/过渡视频会被删掉，删除后不可恢复。`, { title: '删除平台文件', okText: '删除', danger: true }))) return;
   t.deleting = true; t.deleteError = null; t.deleteMsg = ''; render();
   const call = kind === 'warming' ? api.warming.remove(input) : api.transition.remove(input);
   call.then((d) => {
@@ -1226,11 +1294,11 @@ const actions = {
   'chat-retry': () => sendChat(state.chat.lastQuestion),
   'works-clear': async () => {
     if (!remoteWorks()) {
-      if (!window.confirm('确认清空全部作品记录？只会清除本机记录，不影响平台上的文件。')) return;
+      if (!(await askConfirm('确认清空全部作品记录？只会清除本机记录，不影响平台上的文件。', { title: '清空作品', okText: '清空', danger: true }))) return;
       clearWorks(); state.works = []; render(); toast('已清空');
       return;
     }
-    if (!window.confirm('确认清空账号里的全部作品？已提交但未批改的作品会一并撤回并删除；已批改的作品会保留。')) return;
+    if (!(await askConfirm('确认清空账号里的全部作品？已提交但未批改的作品会一并撤回并删除；已批改的作品会保留。', { title: '清空账号作品', okText: '清空', danger: true }))) return;
     try { const r = await api.works.clear(); await reloadWorks(); render(); toast(r.kept ? `已清空，保留了 ${r.kept} 条已批改的作品` : '已清空'); }
     catch (e) { toast(toApiError(e).message); }
   },
@@ -1258,7 +1326,7 @@ const actions = {
   'works-import-local': async () => {
     const local = listWorks();
     if (!local.length) return;
-    if (!window.confirm(`把这台电脑上未登录时保存的 ${local.length} 条作品导入到你的账号？如果这些不是你的作品，请点「取消」。`)) return;
+    if (!(await askConfirm(`把这台电脑上未登录时保存的 ${local.length} 条作品导入到你的账号？如果这些不是你的作品，请点「取消」。`, { title: '导入本机作品', okText: '导入' }))) return;
     let done = 0;
     for (const w of local.slice().reverse()) {
       try { const r = await api.works.add({ kind: w.kind, type: w.type, title: w.title, url: w.url, text: w.text, duration: w.duration, mode: w.mode }); if (!r.duplicate) done += 1; } catch { /* 单条失败跳过 */ }
@@ -1266,9 +1334,9 @@ const actions = {
     clearWorks();
     await reloadWorks(); render(); toast(`已导入 ${done} 条作品`);
   },
-  'work-submit': (el) => {
+  'work-submit': async (el) => {
     const w = findWork(el.dataset.id); if (!w) return;
-    if (!window.confirm(`把「${w.title}」提交给老师批改？批改前可以撤回。`)) return;
+    if (!(await askConfirm(`把「${w.title}」提交给老师批改？批改前可以撤回。`, { title: '提交给老师', okText: '提交' }))) return;
     workOp(() => api.works.submit(w.id), '已提交，等待老师批改');
   },
   'work-withdraw': (el) => { const w = findWork(el.dataset.id); if (w) workOp(() => api.works.withdraw(w.id), '已撤回'); },
@@ -1383,7 +1451,7 @@ const actions = {
   'livetest-close': async () => {
     const t = state.livetest;
     if (t.busy || !t.session?.sessionId) return;
-    if (!window.confirm('确认关闭直播间？关播后观众端会断开。')) return;
+    if (!(await askConfirm('确认关闭直播间？关播后观众端会断开。', { title: '关闭直播间', okText: '关闭直播间', danger: true }))) return;
     t.busy = 'close'; t.error = null; render();
     try {
       await api.liveTest.close(t.session.sessionId);
@@ -1481,7 +1549,7 @@ const actions = {
   'multitest-close': async () => {
     const t = state.multitest;
     if (t.busy || !t.session?.sessionId) return;
-    if (!window.confirm('确认结束直播？关播后观众端会断开。')) return;
+    if (!(await askConfirm('确认结束直播？关播后观众端会断开。', { title: '结束直播', okText: '结束直播', danger: true }))) return;
     t.busy = 'close'; t.error = null; render();
     try {
       await api.multiTest.close(t.session.sessionId);
@@ -1557,7 +1625,7 @@ const actions = {
   'livescript-rename': async (el) => {
     const sc = (state.livescripts.scripts || []).find((x) => x.id === el.dataset.id);
     if (!sc) return;
-    const name = window.prompt('给脚本改个名字', sc.name);
+    const name = await askPrompt('给脚本改个名字', { title: '重命名脚本', value: sc.name, validate: (v) => (v.trim() ? '' : '名字不能为空') });
     if (name === null || !name.trim()) return;
     try { await api.liveScripts.rename(sc.id, name.trim()); await loadLiveScripts(); toast('已改名'); }
     catch (e) { toast(toApiError(e).message); }
@@ -1565,7 +1633,7 @@ const actions = {
   'livescript-del': async (el) => {
     const sc = (state.livescripts.scripts || []).find((x) => x.id === el.dataset.id);
     if (!sc) return;
-    if (!window.confirm(`确认删除脚本《${sc.name}》？只删本站脚本库里的记录，不影响平台。`)) return;
+    if (!(await askConfirm(`确认删除脚本《${sc.name}》？只删本站脚本库里的记录，不影响平台。`, { title: '删除脚本', okText: '删除', danger: true }))) return;
     try { await api.liveScripts.remove(sc.id); await loadLiveScripts(); toast('已删除'); }
     catch (e) { toast(toApiError(e).message); }
   },
@@ -1603,11 +1671,12 @@ const actions = {
   'token-fetch': () => loadToken(false),
   'token-force': () => loadToken(true),
   'nav-collapse': () => { state.navCollapsed = !state.navCollapsed; try { localStorage.setItem('ruying-nav-collapsed', state.navCollapsed ? '1' : '0'); } catch { /* ignore */ } render(); },
+  'ask-no': () => cancelAsk(),
   'tour-next': () => { const n = nextTourStep(state.tour); if (n < 0) markTourDone(localStorage); state.tour = n; render(); },
   'tour-skip': () => { state.tour = -1; markTourDone(localStorage); render(); },
 };
 
-document.addEventListener('click', (ev) => {
+document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-action],[data-group],[data-filter],[data-use],[data-experience],[data-create],[data-mode],[data-del],[data-rename],[data-work-view],[data-kb-del],[data-skip],[data-module],[data-module-group],[data-module-all],[data-quick-days],[data-quick-extend],[data-user-act],[data-vendor-act],[data-key-revoke],[data-class-act],[data-teach-view],[data-teach-save],[data-bill-tab],[data-livescripts-tab]');
   if (!t) return;
   if (admin.click(t)) return;
@@ -1636,7 +1705,7 @@ document.addEventListener('click', (ev) => {
   if (d.mode) { if (d.mode !== state.mode) { state.dialog = { type: 'mode' }; render(); } return; }
   if (d.del) {
     const w = findWork(d.del); if (!w) return;
-    if (!window.confirm(w.submittedAt ? '这条作品已提交给老师，删除后老师将看不到它。确认删除？' : '确认删除这条作品记录？')) return;
+    if (!(await askConfirm(w.submittedAt ? '这条作品已提交给老师，删除后老师将看不到它。确认删除？' : '确认删除这条作品记录？', { title: '删除作品', okText: '删除', danger: true }))) return;
     if (w.remote) { workOp(() => api.works.remove(w.id), '已删除'); return; }
     removeWork(d.del); state.works = listWorks(); render(); toast('已删除');
     return;
@@ -1644,7 +1713,7 @@ document.addEventListener('click', (ev) => {
   if (d.rename) {
     const w = findWork(d.rename);
     if (!w) return;
-    const name = window.prompt('给作品改个名字', w.title);
+    const name = await askPrompt('给作品改个名字', { title: '重命名作品', value: w.title, validate: (v) => (v.trim() ? '' : '名字不能为空') });
     if (name === null) return;
     if (!name.trim()) { toast('名字不能为空'); return; }
     if (w.remote) { workOp(() => api.works.rename(w.id, name), '已改名'); return; }
@@ -1700,17 +1769,46 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && isAskOpen()) { ev.preventDefault(); cancelAsk(); return; }
   if (ev.key === 'Escape' && state.dialog && state.dialog.type !== 'cred') { if (state.dialog.type === 'consent') { consentResolve?.(false); consentResolve = null; } state.dialog = null; render(); envSwitch.focus(); return; }
   if (ev.key === 'Enter' && ev.target.id === 'chat-input' && !ev.isComposing) { ev.preventDefault(); sendChat(); }
   if (ev.key === 'Tab' && state.dialog) { // 弹窗内循环焦点
-    const f = [...overlayRoot.querySelectorAll('button:not([disabled]), a[href]')];
+    const f = [...overlayRoot.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])')];
     if (!f.length) return;
     if (ev.shiftKey && document.activeElement === f[0]) { ev.preventDefault(); f[f.length - 1].focus(); }
     else if (!ev.shiftKey && document.activeElement === f[f.length - 1]) { ev.preventDefault(); f[0].focus(); }
   }
 });
 
+
+/* ---- 表单即时校验：失焦时校验该字段；已显示错误的字段在输入时实时更新。不整页重渲染，不打断输入 ---- */
+function liveCheck(el, { force = false } = {}) {
+  const kind = el?.dataset?.validate; if (!kind || !el.id) return;
+  const r = liveValidate(kind, state); if (!r) return;
+  const msg = r.errors[el.id] || '';
+  // 联动字段：改"新密码"会影响"再次输入"，改"开始日期"会影响"到期日期"
+  const linked = { 'pw-new': ['pw-again'], 'tf-start': ['tf-end'] }[el.id] || [];
+  if (force || touched.has(el.id) || el.getAttribute('aria-invalid') === 'true') setFieldError(document, el.id, msg);
+  for (const id of linked) if (touched.has(id)) setFieldError(document, id, r.errors[id] || '');
+}
+document.addEventListener('focusout', (ev) => {
+  const el = ev.target; if (!(el?.dataset?.validate && el.id)) return;
+  if ((el.value ?? '') === '' && !touched.has(el.id)) return;        // 从没填过、直接划过的字段不报错
+  touched.add(el.id);
+  setTimeout(() => liveCheck(document.getElementById(el.id) || el, { force: true }), 0);
+});
+document.addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (!(el?.dataset?.validate && el.id && (touched.has(el.id) || el.getAttribute('aria-invalid') === 'true'))) return;
+  // 让出一拍：原有 input 处理器（把值写回 state、必要时 render）先跑完，这里读到的才是最新值
+  setTimeout(() => liveCheck(document.getElementById(el.id) || el), 0);
+});
+// 换页/重渲染后字段是新节点，旧的"已碰过"记录不能带到别的表单
+window.addEventListener('hashchange', () => touched.clear());
+
 document.addEventListener('submit', (ev) => {
+  const ask = ev.target.closest('[data-ask-form]');
+  if (ask) { ev.preventDefault(); acceptAsk(ask); return; }
   const form = ev.target.closest('[data-form]');
   if (!form) return;
   ev.preventDefault();

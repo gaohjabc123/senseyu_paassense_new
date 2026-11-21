@@ -583,3 +583,130 @@ main:focus { outline: none; }
 .range-row .exp-range { flex: 1; min-width: 0; accent-color: var(--brand-600); }
 .range-row .range-ends { font-size: 12px; color: var(--gray-500); flex: none; }
 .range-row .range-value { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; flex: none; }
+
+/* =====================================================================
+   UI 交互优化（追加在文件末尾，按主题分节；每节一个独立提交，可单独回退）
+   a11y 焦点环/减少动效/触控 · toast 提示条 · dialog 弹窗 · loading 骨架屏 · form 校验 · contrast 对比度
+   ===================================================================== */
+
+/* ---- 1. 焦点环：键盘用户看得见，鼠标用户不被打扰 ---- */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--brand-600); outline-offset: 2px; border-radius: var(--radius-sm);
+}
+.btn:focus-visible, .chip:focus-visible, .nav-item:focus-visible, .create-tab:focus-visible,
+.cap-card:focus-visible, .quick-item:focus-visible, .mode-card:focus-visible, .user-chip:focus-visible, .env-switch:focus-visible {
+  outline: 2px solid var(--brand-600); outline-offset: 2px;
+}
+.hero :where(a, button):focus-visible, .cta :where(a, button):focus-visible { outline-color: #fff; }
+.input:focus-visible, .editor:focus-visible { outline: none; }   /* 这两个已有 box-shadow 焦点样式 */
+
+/* ---- 2. 尊重"减少动效"系统设置 ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  .spinner { animation: none; border-top-color: var(--brand-600); border-right-color: var(--brand-600); }
+}
+
+/* ---- 3. Toast ---- */
+#toast-root { position: fixed; right: 20px; bottom: 20px; z-index: 90; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
+#toast-root > .toast { max-width: min(420px, calc(100vw - 32px)); }
+.toast { pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; border-radius: var(--radius-md);
+  background: var(--gray-900); color: #fff; font-size: 13px; line-height: 1.6; box-shadow: var(--shadow-3); animation: toast-in .18s ease-out; }
+.toast--ok   { border-left: 4px solid #16A34A; }
+.toast--err  { border-left: 4px solid #DC2626; background: #7F1D1D; }
+.toast__msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.toast__close { flex: none; width: 22px; height: 22px; border-radius: 50%; color: rgba(255,255,255,.7); font-size: 16px; line-height: 1; }
+.toast__close:hover { color: #fff; background: rgba(255,255,255,.14); }
+.toast.is-leaving { opacity: 0; transform: translateY(6px); transition: opacity .16s, transform .16s; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ---- 4. 页面内确认 / 输入弹窗 ---- */
+.sheet #ask-desc { margin-bottom: var(--sp-3); }
+.sheet #ask-desc p + p { margin-top: 6px; }
+.sheet .actions { justify-content: flex-end; }
+.btn--danger-solid { background: #DC2626; border-color: #DC2626; color: #fff; }
+.btn--danger-solid:hover:not(:disabled) { background: #B91C1C; border-color: #B91C1C; }
+.field-error { display: block; }                      /* 颜色/间距沿用原仓库 .field-error，这里只补 display */
+.field-error[hidden] { display: none; }                  /* hidden 必须生效，否则空的错误行只剩一个孤零零的 ! */
+.sheet { animation: sheet-in .16s ease-out; }
+@keyframes sheet-in { from { opacity: 0; transform: translate(-50%, -48%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+
+/* ---- 5. 触控目标 ≥ 40px、手机上弹窗贴底 ---- */
+@media (pointer: coarse) {
+  .btn, .chip, .nav-item, .create-tab { min-height: 40px; }
+  .btn--sm { min-height: 36px; }
+  .seg label { min-height: 40px; }
+}
+@media (max-width: 720px) {
+  .sheet { top: auto; bottom: 0; left: 0; transform: none; width: 100%; max-width: none; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-height: 88vh; padding-bottom: calc(var(--sp-6) + env(safe-area-inset-bottom)); animation: sheet-up .2s ease-out; }
+  .sheet .actions { flex-direction: column-reverse; }
+  .sheet .actions .btn { width: 100%; justify-content: center; }
+  .tour-card { right: 12px; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); width: auto; }
+  #toast-root { right: 16px; left: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); align-items: stretch; }
+  #toast-root > .toast { max-width: none; }
+}
+@keyframes sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---- 6. 骨架屏（列表/表格首次加载时代替"加载中…"文字） ---- */
+.skeleton { display: block; border-radius: 8px; background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-50) 37%, var(--gray-100) 63%); background-size: 400% 100%; animation: skeleton 1.3s ease infinite; }
+.skeleton--line { height: 14px; margin: 10px 0; }
+.skeleton--row  { height: 44px; margin: 8px 0; }
+@keyframes skeleton { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+
+.loading--skeleton { display: block; padding: var(--sp-2) 0; }
+.loading--skeleton > div { display: block; }
+
+/* ---- 7. 表单即时校验 ---- */
+.input[aria-invalid="true"], .editor[aria-invalid="true"] { border-color: #DC2626; box-shadow: 0 0 0 3px #FEE2E2; }
+.input[aria-invalid="true"]:focus, .editor[aria-invalid="true"]:focus { border-color: #DC2626; box-shadow: 0 0 0 3px #FECACA; }
+.field-error::before { content: "! "; font-weight: 700; }                 /* 不只靠颜色：加图标符号 */
+fieldset[aria-invalid="true"] { border-top-color: #DC2626; }
+fieldset:focus { outline: none; }
+fieldset:focus-visible { outline: 2px solid var(--brand-600); outline-offset: 4px; border-radius: var(--radius-sm); }
+/* 必填标记：只给带 aria-required 的输入对应的 label 加星号 */
+.form-field:has(> [aria-required="true"]) > label::after { content: " *"; color: #DC2626; }
+
+/* =====================================================================
+   8. 颜色对比度修正（WCAG 2.1 AA：普通文字 ≥ 4.5:1，控件边界 ≥ 3:1）
+   只改"文字色/控件边界色"，不动品牌色、背景色与布局。
+   复用仓库里已有的深一档色：#047857(绿) #B45309(橙) #B91C1C(红) 与 --brand-700。
+   每条后面的数字是 修正前 → 修正后 的对比度。
+   ===================================================================== */
+
+/* 状态胶囊：base.css 把 --success/--warning/--danger 直接当文字色（2.07～3.44），style.css 没有覆盖。
+   圆点 ::before 用 currentColor，所以圆点也随之变深，和文字一致 */
+      .pill--ok   { color: #047857; }                   /* 2.41 → 5.21 */
+.pill--warn, .pill--mock       { color: #B45309; }      /* 2.07 → 4.84 */
+.pill--err                     { color: #B91C1C; }      /* 3.44 → 5.91 */
+
+/* 能力卡「已开通」 */
+.cap-card__dot.on { color: #047857; }                   /* 2.54 → 5.48（白底） */
+
+/* 导航分组标题（12px）与停用模块标签 */
+.nav-group__label { color: var(--gray-500); }           /* 2.54 → 4.83（白底） */
+
+/* 能力胶囊里的小注（11px） */
+.cap-pill small { color: var(--brand-700); }            /* 3.99 → 7.07 */
+
+/* 额度预警数字（18px 粗体，不满足"大字"标准，须 4.5） */
+.quota-row--warn .quota-row__remain b { color: #B45309; }   /* 3.19 → 5.02 */
+
+/* 停用模块标签：gray-100 底，原 gray-400 仅 2.31。gray-500 在 gray-100 上是 4.39（差 0.11），所以直接用 gray-600 */
+.mod-chip:not(.is-on) { color: var(--gray-600); }       /* 2.31 → 6.87 */
+
+/* 输入控件边界：1px gray-200 / gray-300 在白底仅 1.24 / 1.47，
+   用户难以看出输入框在哪。WCAG 1.4.11 要求 ≥ 3:1。
+   gray-400 (#9CA3AF) 为 2.54，仍不够；gray-500 (#6B7280) 为 4.83，足够但偏重，
+   取介于其间的 #858B97：白底 3.42 / gray-50 底 3.27 / gray-100 底 3.11（均 ≥ 3），看得清又不抢眼 */
+:root { --control-border: #858B97; }
+.input, .editor, .seg label, select.input { border-color: var(--control-border); }
+.chip { border-color: var(--control-border); }
+.input:hover, .editor:hover { border-color: var(--gray-600); }
+.input:focus, .editor:focus { border-color: var(--brand-500); }
+.seg label:has(input:checked), .chip.is-on { border-color: var(--brand-500); }
+.input[aria-invalid="true"], .editor[aria-invalid="true"] { border-color: #DC2626; }
+
+/* 开关关闭态：gray-300 在白底 1.47，滑块是唯一的状态指示 */
+.switch-slider { background: var(--control-border); }  /* 1.47 → 3.4 */
+.switch input:checked + .switch-slider { background: var(--brand-600); }

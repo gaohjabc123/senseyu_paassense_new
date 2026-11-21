@@ -1,7 +1,10 @@
 // admin.js —— 登录、账号、超级管理员后台、客户管理员后台（视图 + 控制逻辑）
 import { api, toApiError } from './api.js';
+import { askConfirm, askPrompt } from './ui.js';
+import { validateLogin, validatePassword, validateTenant, validateUserCreate, validateImport, validateClass, validateKey, validateQuota, validatePurchase, validateVendor } from './validate.js';
+import { applyErrors, summaryText } from './fields.js';
 import { esc } from './html.js';
-import { errorBlock, loadingBlock } from './views.js';
+import { errorBlock, skeletonBlock } from './views.js';
 import { roleLabel, ORG_TYPES, orgTypeLabel } from './product.js';
 import { CAPABILITIES, GROUPS, capById } from './capabilities.js';
 
@@ -57,8 +60,8 @@ function keysTable(keys, scope) {
 function keyCreateForm(s, scope) {
   const f = s.adm.keyForm;
   return `<form class="inline-form" data-form="key-create" data-scope="${scope}" novalidate>
-    <div class="form-field"><label for="kf-name">密钥名称</label><input class="input" id="kf-name" data-bind="adm.keyForm.name" value="${esc(f.name)}" placeholder="如：官网后台、门店小程序" /></div>
-    <div class="form-field"><label for="kf-exp">有效期至（可选）</label><input class="input" type="date" id="kf-exp" data-bind="adm.keyForm.expiresDay" value="${esc(f.expiresDay)}" /></div>
+    <div class="form-field"><label for="kf-name">密钥名称</label><input class="input" id="kf-name" data-bind="adm.keyForm.name" data-validate="key" aria-required="true" value="${esc(f.name)}" placeholder="如：官网后台、门店小程序" /></div>
+    <div class="form-field"><label for="kf-exp">有效期至（可选）</label><input class="input" type="date" id="kf-exp" data-bind="adm.keyForm.expiresDay" data-validate="key" value="${esc(f.expiresDay)}" /></div>
     <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${f.busy ? 'disabled' : ''}>${f.busy ? '签发中…' : '签发密钥'}</button></div>
   </form>${f.error ? errorBlock(f.error) : ''}`;
 }
@@ -81,9 +84,9 @@ export function loginView(s) {
     <p class="muted">客户账号由你的企业管理员或商予科技开通。</p>
     <form class="auth-form" data-form="login" novalidate>
       <div class="form-field"><label for="login-user">用户名</label>
-        <input class="input" id="login-user" data-bind="auth.username" autocomplete="username" value="${esc(f.username)}" required /></div>
+        <input class="input" id="login-user" data-bind="auth.username" data-validate="login" autocomplete="username" value="${esc(f.username)}" aria-required="true" /></div>
       <div class="form-field"><label for="login-pass">密码</label>
-        <input class="input" id="login-pass" type="password" data-bind="auth.password" autocomplete="current-password" value="${esc(f.password)}" required /></div>
+        <input class="input" id="login-pass" type="password" data-bind="auth.password" data-validate="login" autocomplete="current-password" value="${esc(f.password)}" aria-required="true" /></div>
       <button class="btn btn--primary btn--block" type="submit" ${f.busy ? 'disabled aria-busy="true"' : ''}>${f.busy ? '登录中…' : '登录'}</button>
     </form>
     ${f.error ? errorBlock(f.error) : ''}
@@ -111,10 +114,10 @@ export function accountView(s) {
       </div>
       <div class="card"><div class="card__title"><h2>修改密码</h2></div>
         <form data-form="change-pw" novalidate>
-          <div class="form-field"><label for="pw-old">当前密码</label><input class="input" id="pw-old" type="password" autocomplete="current-password" data-bind="pw.old" value="${esc(f.old)}" /></div>
-          <div class="form-field"><label for="pw-new">新密码</label><input class="input" id="pw-new" type="password" autocomplete="new-password" data-bind="pw.next" value="${esc(f.next)}" aria-describedby="pw-hint" />
+          <div class="form-field"><label for="pw-old">当前密码</label><input class="input" id="pw-old" type="password" autocomplete="current-password" data-bind="pw.old" data-validate="pw" aria-required="true" value="${esc(f.old)}" /></div>
+          <div class="form-field"><label for="pw-new">新密码</label><input class="input" id="pw-new" type="password" autocomplete="new-password" data-bind="pw.next" data-validate="pw" aria-required="true" value="${esc(f.next)}" aria-describedby="pw-hint" />
             <small class="field-hint" id="pw-hint">至少 8 位，同时包含字母和数字。修改后其他设备上的登录会失效。</small></div>
-          <div class="form-field"><label for="pw-again">再次输入新密码</label><input class="input" id="pw-again" type="password" autocomplete="new-password" data-bind="pw.again" value="${esc(f.again)}" /></div>
+          <div class="form-field"><label for="pw-again">再次输入新密码</label><input class="input" id="pw-again" type="password" autocomplete="new-password" data-bind="pw.again" data-validate="pw" aria-required="true" value="${esc(f.again)}" /></div>
           <div class="actions"><button class="btn btn--primary" type="submit" ${f.busy ? 'disabled' : ''}>${f.busy ? '保存中…' : '保存新密码'}</button></div>
         </form>
         ${f.error ? errorBlock(f.error) : ''}
@@ -202,8 +205,8 @@ function userCreateForm(s, scope, full, { school = false, classes = [] } = {}) {
   const f = s.adm.userForm;
   const roles = school ? ['member', 'teacher', 'tenant_admin'] : ['member', 'tenant_admin'];
   return `<form class="inline-form" data-form="user-create" data-scope="${scope}" novalidate>
-    <div class="form-field"><label for="nu-name">用户名</label><input class="input" id="nu-name" data-bind="adm.userForm.username" value="${esc(f.username)}" placeholder="字母开头，3～32 位" ${full ? 'disabled' : ''} /></div>
-    <div class="form-field"><label for="nu-display">姓名（可选）</label><input class="input" id="nu-display" data-bind="adm.userForm.displayName" value="${esc(f.displayName)}" ${full ? 'disabled' : ''} /></div>
+    <div class="form-field"><label for="nu-name">用户名</label><input class="input" id="nu-name" data-bind="adm.userForm.username" data-validate="user" aria-required="true" value="${esc(f.username)}" placeholder="字母开头，3～32 位" ${full ? 'disabled' : ''} /></div>
+    <div class="form-field"><label for="nu-display">姓名（可选）</label><input class="input" id="nu-display" data-bind="adm.userForm.displayName" data-validate="user" maxlength="30" value="${esc(f.displayName)}" ${full ? 'disabled' : ''} /></div>
     <div class="form-field"><label for="nu-role">角色</label><select class="input" id="nu-role" data-bind="adm.userForm.role" ${full ? 'disabled' : ''}>
       ${roles.map((r) => `<option value="${r}" ${(roles.includes(f.role) ? f.role : 'member') === r ? 'selected' : ''}>${roleLabel(r, school)}</option>`).join('')}</select></div>
     ${school ? `<div class="form-field"><label for="nu-class">班级（学生）</label><select class="input" id="nu-class" data-bind="adm.userForm.classId" ${full ? 'disabled' : ''}>
@@ -227,9 +230,9 @@ function importForm(s, scope, { school = false } = {}) {
   const n = parseRoster(f.text).length;
   return `<form data-form="user-import" data-scope="${scope}" novalidate>
     <div class="form-field"><label for="imp-text">名单（每行一个账号：${school ? '学号或用户名, 姓名, 班级' : '用户名, 姓名'}）</label>
-      <textarea class="editor editor--mono" id="imp-text" rows="6" data-bind="adm.importForm.text" data-live placeholder="${school ? '20260101, 张三, 2026级数字媒体1班&#10;20260102, 李四, 2026级数字媒体1班' : 'zhangsan, 张三&#10;lisi, 李四'}">${esc(f.text)}</textarea></div>
+      <textarea class="editor editor--mono" id="imp-text" rows="6" data-bind="adm.importForm.text" data-validate="import" aria-required="true" data-live placeholder="${school ? '20260101, 张三, 2026级数字媒体1班&#10;20260102, 李四, 2026级数字媒体1班' : 'zhangsan, 张三&#10;lisi, 李四'}">${esc(f.text)}</textarea></div>
     <div class="inline-form">
-      <div class="form-field"><label for="imp-prefix">用户名前缀（可选）</label><input class="input" id="imp-prefix" data-bind="adm.importForm.prefix" value="${esc(f.prefix)}" maxlength="12" placeholder="如学校缩写 szpt" /></div>
+      <div class="form-field"><label for="imp-prefix">用户名前缀（可选）</label><input class="input" id="imp-prefix" data-bind="adm.importForm.prefix" data-validate="import" value="${esc(f.prefix)}" maxlength="12" placeholder="如学校缩写 szpt" /></div>
       ${school ? `<div class="form-field"><label for="imp-role">导入为</label><select class="input" id="imp-role" data-bind="adm.importForm.role"><option value="member" ${f.role !== 'teacher' ? 'selected' : ''}>学生</option><option value="teacher" ${f.role === 'teacher' ? 'selected' : ''}>教师</option></select></div>` : ''}
       <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${f.busy || !n ? 'disabled' : ''}>${f.busy ? '导入中…' : n ? `导入 ${n} 个账号` : '导入'}</button></div>
     </div>
@@ -256,7 +259,7 @@ function logsPanel(s, scope) {
       <div class="form-field"><label for="lf-to">结束日期</label><input class="input" type="date" id="lf-to" data-bind="adm.logs.filters.to" value="${esc(f.to)}" /></div>
       <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit">查询</button><a class="btn" href="${esc(csv)}" download>导出 CSV</a></div>
     </form></div>
-    <div class="card">${!data ? (L.error ? errorBlock(L.error, { retry: 'logs-reload' }) : loadingBlock('正在读取日志…')) : !data.rows.length
+    <div class="card">${!data ? (L.error ? errorBlock(L.error, { retry: 'logs-reload' }) : skeletonBlock('正在读取日志…')) : !data.rows.length
       ? '<div class="empty"><p class="empty__title">没有符合条件的记录</p><p>换个日期范围或筛选条件试试。</p></div>'
       : `<p class="muted table-meta">共 ${data.total} 条${L.loading ? ' · 刷新中…' : ''}</p><div class="table-scroll"><table class="table admin-table log-table"><thead><tr>
           <th scope="col">时间</th>${scope === 'admin' ? '<th scope="col">客户</th>' : ''}<th scope="col">账号</th><th scope="col">操作</th><th scope="col">能力</th><th scope="col">环境</th><th scope="col">结果</th><th scope="col">耗时</th><th scope="col">说明</th></tr></thead><tbody>
@@ -279,7 +282,7 @@ function logsPanel(s, scope) {
 /* ================= 视图：客户管理员 ================= */
 export function orgOverviewView(s) {
   const o = s.adm.orgOverview;
-  if (!o) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取企业信息…')}</div>`;
+  if (!o) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取企业信息…')}</div>`;
   const t = o.tenant;
   return `<div class="console">
     <div class="grid-2">
@@ -310,7 +313,7 @@ export function orgOverviewView(s) {
 
 export function orgUsersView(s) {
   const d = s.adm.orgUsers;
-  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取成员…')}</div>`;
+  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取成员…')}</div>`;
   const full = d.users.length >= d.maxUsers;
   const school = !!d.isSchool; const classes = d.classes || [];
   return `<div class="console">
@@ -327,13 +330,13 @@ const notSchool = () => '<div class="console"><div class="card"><div class="empt
 export function orgClassesView(s) {
   if (!isSchool(s)) return notSchool();
   const d = s.adm.orgClasses;
-  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取班级…')}</div>`;
+  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取班级…')}</div>`;
   const f = s.adm.classForm;
   const teacherOptions = (sel) => `<option value="">暂不指定</option>${d.teachers.map((t) => `<option value="${t.id}" ${sel === t.id ? 'selected' : ''}>${esc(t.displayName || t.username)}${t.role === 'tenant_admin' ? '（管理员）' : ''}</option>`).join('')}`;
   return `<div class="console">
     <div class="card"><div class="card__title"><h2>新建班级</h2></div>
       <form class="inline-form" data-form="class-create" novalidate>
-        <div class="form-field"><label for="cf-name">班级名称</label><input class="input" id="cf-name" data-bind="adm.classForm.name" value="${esc(f.name)}" maxlength="40" placeholder="如 2026级数字媒体1班" /></div>
+        <div class="form-field"><label for="cf-name">班级名称</label><input class="input" id="cf-name" data-bind="adm.classForm.name" data-validate="class" aria-required="true" value="${esc(f.name)}" maxlength="40" placeholder="如 2026级数字媒体1班" /></div>
         <div class="form-field"><label for="cf-teacher">任课教师</label><select class="input" id="cf-teacher" data-bind="adm.classForm.teacherId">${teacherOptions(f.teacherId)}</select></div>
         <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${f.busy ? 'disabled' : ''}>${f.busy ? '创建中…' : '创建班级'}</button></div>
       </form>
@@ -357,7 +360,7 @@ export function teachView(s) {
   if (!isSchool(s)) return notSchool();
   const T = s.adm.teach;
   const d = T.data;
-  if (!d) return `<div class="console">${T.error ? errorBlock(T.error, { retry: 'adm-reload' }) : loadingBlock('正在读取作品…')}</div>`;
+  if (!d) return `<div class="console">${T.error ? errorBlock(T.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取作品…')}</div>`;
   const st = d.stats;
   const isAdmin = s.me.user.role === 'tenant_admin';
   if (!d.classes.length) return `<div class="console"><div class="card"><div class="empty"><p class="empty__title">${isAdmin ? '还没有班级' : '你还没有任课班级'}</p>
@@ -396,7 +399,7 @@ export function teachView(s) {
 
 export function orgApiView(s) {
   const d = s.adm.orgKeys;
-  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取…')}</div>`;
+  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取…')}</div>`;
   const base = `${location.origin}${location.pathname.replace(/[^/]*$/, '')}open/v1`;
   const allowed = CAPABILITIES.filter((c) => d.modules.includes(c.id));
   return `<div class="console">
@@ -405,7 +408,7 @@ export function orgApiView(s) {
     <div class="card"><div class="card__title"><h2>签发新密钥</h2></div>${keyCreateForm(s, 'org')}
       <p class="field-hint">每个接入系统单独一个密钥，泄露时只需吊销那一个。密钥只能在服务端使用。</p></div>
     <div class="card"><div class="card__title"><h2>额度</h2></div>${quotaTable(d.quota)}</div>
-    <div class="card"><div class="card__title"><h2>额度流水</h2></div>${s.adm.orgLedger ? ledgerTable(s.adm.orgLedger) : loadingBlock('正在读取流水…')}</div>
+    <div class="card"><div class="card__title"><h2>额度流水</h2></div>${s.adm.orgLedger ? ledgerTable(s.adm.orgLedger) : skeletonBlock('正在读取流水…')}</div>
     <div class="card api-doc"><div class="card__title"><h2>接入说明</h2></div>
       <table class="table kv-table"><tbody>
         <tr><th scope="row">接口地址</th><td><code>${esc(base)}</code></td></tr>
@@ -447,7 +450,7 @@ export function orgLogsView(s) { return `<div class="console">${logsPanel(s, 'or
 /* ================= 视图：超级管理员 ================= */
 export function adminOverviewView(s) {
   const o = s.adm.overview;
-  if (!o) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取运营数据…')}</div>`;
+  if (!o) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取运营数据…')}</div>`;
   const t = o.tenants;
   return `<div class="console">
     <div class="kpi-grid">
@@ -466,7 +469,7 @@ export function adminOverviewView(s) {
 
 export function tenantsView(s) {
   const list = s.adm.tenants;
-  if (!list) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取客户…')}</div>`;
+  if (!list) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取客户…')}</div>`;
   const f = s.adm.tenantFilter;
   const shown = list.filter((t) => (!f.q || t.name.includes(f.q.trim())) && (!f.status
     || (f.status === 'active' && t.usable) || (f.status === 'soon' && t.usable && t.daysLeft <= 7)
@@ -496,14 +499,14 @@ export function tenantsView(s) {
 
 export function tenantFormView(s) {
   const f = s.adm.form;
-  if (!f) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取…')}</div>`;
+  if (!f) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取…')}</div>`;
   const isNew = !f.id;
   const vendors = s.adm.vendors?.vendors || [];
   const quick = [[7, '7 天体验'], [14, '14 天体验'], [30, '30 天'], [365, '1 年']];
   return `<div class="console"><form class="card tenant-form" data-form="tenant" novalidate>
     <nav class="exp-crumb" aria-label="位置"><a href="#admin/tenants" data-view="admin/tenants">客户管理</a><span aria-hidden="true">/</span><b>${isNew ? '新建客户' : esc(f.name)}</b></nav>
     <fieldset><legend>基本信息</legend><div class="form-grid">
-      <div class="form-field"><label for="tf-name">客户名称</label><input class="input" id="tf-name" data-bind="adm.form.name" value="${esc(f.name)}" maxlength="60" /></div>
+      <div class="form-field"><label for="tf-name">客户名称</label><input class="input" id="tf-name" data-bind="adm.form.name" data-validate="tenant" aria-required="true" value="${esc(f.name)}" maxlength="60" /></div>
       <div class="form-field"><label for="tf-contact">联系人（可选）</label><input class="input" id="tf-contact" data-bind="adm.form.contact" value="${esc(f.contact)}" maxlength="60" placeholder="如：王经理 / 销售对接人" /></div>
       <div class="form-field"><label for="tf-org">客户类别</label><select class="input" id="tf-org" data-bind="adm.form.orgType" data-live>
         ${ORG_TYPES.map((o) => `<option value="${o.id}" ${f.orgType === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}</select>
@@ -511,19 +514,19 @@ export function tenantFormView(s) {
       <div class="form-field"><span class="label">客户类型</span><div class="seg" role="radiogroup" aria-label="客户类型">
         <label><input type="radio" name="tf-plan" value="trial" data-bind="adm.form.plan" ${f.plan === 'trial' ? 'checked' : ''} /> 体验客户</label>
         <label><input type="radio" name="tf-plan" value="formal" data-bind="adm.form.plan" ${f.plan === 'formal' ? 'checked' : ''} /> 正式客户</label></div></div>
-      <div class="form-field"><label for="tf-max">成员上限</label><input class="input" id="tf-max" type="number" min="1" max="10000" data-bind="adm.form.maxUsers" value="${esc(f.maxUsers)}" /></div>
+      <div class="form-field"><label for="tf-max">成员上限</label><input class="input" id="tf-max" type="number" min="1" max="10000" data-bind="adm.form.maxUsers" data-validate="tenant" aria-required="true" value="${esc(f.maxUsers)}" /></div>
       ${isNew ? '' : `<div class="form-field"><span class="label">账号状态</span><div class="seg" role="radiogroup" aria-label="账号状态">
         <label><input type="radio" name="tf-status" value="active" data-bind="adm.form.status" ${f.status === 'active' ? 'checked' : ''} /> 启用</label>
         <label><input type="radio" name="tf-status" value="disabled" data-bind="adm.form.status" ${f.status === 'disabled' ? 'checked' : ''} /> 停用（全员立即下线）</label></div></div>`}
     </div></fieldset>
     <fieldset><legend>体验时间与到期时间</legend><div class="form-grid">
-      <div class="form-field"><label for="tf-start">开始日期</label><input class="input" type="date" id="tf-start" data-bind="adm.form.startsDay" value="${esc(f.startsDay)}" /></div>
-      <div class="form-field"><label for="tf-end">到期日期（当天 23:59 到期）</label><input class="input" type="date" id="tf-end" data-bind="adm.form.expiresDay" value="${esc(f.expiresDay)}" /></div>
+      <div class="form-field"><label for="tf-start">开始日期</label><input class="input" type="date" id="tf-start" data-bind="adm.form.startsDay" data-validate="tenant" aria-required="true" value="${esc(f.startsDay)}" /></div>
+      <div class="form-field"><label for="tf-end">到期日期（当天 23:59 到期）</label><input class="input" type="date" id="tf-end" data-bind="adm.form.expiresDay" data-validate="tenant" aria-required="true" value="${esc(f.expiresDay)}" /></div>
     </div>
     <div class="chip-row" role="group" aria-label="快速设置有效期">${quick.map(([n, l]) => `<button class="chip" type="button" data-quick-days="${n}">${l}</button>`).join('')}
       ${isNew ? '' : '<button class="chip" type="button" data-quick-extend="30">在原到期日上续 30 天</button><button class="chip" type="button" data-quick-extend="365">续 1 年</button>'}</div>
     <p class="field-hint">按北京时间计算。开始日期之前与到期日期之后，该客户的成员无法使用工作台，管理员仍可登录查看日志与到期时间。</p></fieldset>
-    <fieldset><legend>模块权限（${f.modules.length} / ${CAPABILITIES.length}）</legend>
+    <fieldset id="tf-modules" tabindex="-1"><legend>模块权限（${f.modules.length} / ${CAPABILITIES.length}）</legend>
       <div class="chip-row"><button class="chip" type="button" data-module-all="1">全部开通</button><button class="chip" type="button" data-module-all="0">全部取消</button></div>
       ${GROUPS.map((g) => { const caps = CAPABILITIES.filter((c) => c.group === g.id); const all = caps.every((c) => f.modules.includes(c.id)); return `<div class="module-group">
         <label class="module-group__head"><input type="checkbox" data-module-group="${g.id}" ${all ? 'checked' : ''} /> <b>${esc(g.name)}</b></label>
@@ -537,7 +540,7 @@ export function tenantFormView(s) {
       <label class="check"><input type="checkbox" data-bind="adm.form.allowBillable" ${f.allowBillable ? 'checked' : ''} /> 允许计费调用（如生成视频；还需服务端开启 ALLOW_BILLABLE）</label>
     </fieldset>
     ${isNew ? `<fieldset><legend>客户管理员账号</legend><div class="form-grid">
-      <div class="form-field"><label for="tf-admin">管理员用户名</label><input class="input" id="tf-admin" data-bind="adm.form.adminUsername" value="${esc(f.adminUsername)}" placeholder="如 acme_admin" /></div>
+      <div class="form-field"><label for="tf-admin">管理员用户名</label><input class="input" id="tf-admin" data-bind="adm.form.adminUsername" data-validate="tenant" aria-required="true" value="${esc(f.adminUsername)}" placeholder="如 acme_admin" /></div>
       <div class="form-field"><label for="tf-admin-name">管理员姓名（可选）</label><input class="input" id="tf-admin-name" data-bind="adm.form.adminDisplayName" value="${esc(f.adminDisplayName)}" /></div></div>
       <p class="field-hint">保存后会生成一次性初始密码。客户管理员可以自己添加成员、查看使用日志与到期时间。</p></fieldset>` : ''}
     <fieldset><legend>备注（仅平台可见）</legend><textarea class="editor" rows="2" data-bind="adm.form.note" aria-label="备注" maxlength="300">${esc(f.note)}</textarea></fieldset>
@@ -550,7 +553,7 @@ export function tenantFormView(s) {
 
 export function tenantDetailView(s) {
   const d = s.adm.tenant;
-  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取客户…')}</div>`;
+  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取客户…')}</div>`;
   const t = d.tenant;
   return `<div class="console">
     <nav class="exp-crumb" aria-label="位置"><a href="#admin/tenants" data-view="admin/tenants">客户管理</a><span aria-hidden="true">/</span><b>${esc(t.name)}</b></nav>
@@ -578,7 +581,7 @@ export function tenantDetailView(s) {
       <form class="inline-form" data-form="quota" novalidate>
         <div class="form-field"><label for="qf-op">操作</label><select class="input" id="qf-op" data-bind="adm.quotaForm.op"><option value="allocate" ${s.adm.quotaForm.op !== 'reclaim' ? 'selected' : ''}>分配给客户</option><option value="reclaim" ${s.adm.quotaForm.op === 'reclaim' ? 'selected' : ''}>回收到额度池</option></select></div>
         <div class="form-field"><label for="qf-meter">计量项</label><select class="input" id="qf-meter" data-bind="adm.quotaForm.meter">${Object.entries(METERS).map(([m, x]) => `<option value="${m}" ${s.adm.quotaForm.meter === m ? 'selected' : ''}>${x.label}（${x.unit}）</option>`).join('')}</select></div>
-        <div class="form-field"><label for="qf-amt">数量</label><input class="input" id="qf-amt" type="number" min="1" data-bind="adm.quotaForm.amount" value="${esc(s.adm.quotaForm.amount)}" /></div>
+        <div class="form-field"><label for="qf-amt">数量</label><input class="input" id="qf-amt" type="number" min="1" data-bind="adm.quotaForm.amount" data-validate="quota" aria-required="true" value="${esc(s.adm.quotaForm.amount)}" /></div>
         <div class="form-field"><label for="qf-note">备注（可选）</label><input class="input" id="qf-note" data-bind="adm.quotaForm.note" value="${esc(s.adm.quotaForm.note)}" placeholder="如：合同 HT-2026-018" /></div>
         <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${s.adm.quotaForm.busy || !t.vendorId ? 'disabled' : ''}>${s.adm.quotaForm.busy ? '处理中…' : '确认'}</button></div>
       </form>
@@ -597,7 +600,7 @@ export function tenantDetailView(s) {
 
 export function vendorsView(s) {
   const d = s.adm.vendors;
-  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : loadingBlock('正在读取厂商凭据…')}</div>`;
+  if (!d) return `<div class="console">${s.adm.error ? errorBlock(s.adm.error, { retry: 'adm-reload' }) : skeletonBlock('正在读取厂商凭据…')}</div>`;
   const f = s.adm.vendorForm;
   return `<div class="console">
     <p class="muted page-intro">厂商凭据是如影平台的 APP_ID / APP_KEY。平台用它向如影换取 Token，再按客户分配使用；客户与成员永远看不到凭据和 Token 原文。</p>
@@ -622,19 +625,19 @@ export function vendorsView(s) {
       ${d.vendors.length ? `<form class="inline-form" data-form="purchase" novalidate>
         <div class="form-field"><label for="pf-v">厂商凭据</label><select class="input" id="pf-v" data-bind="adm.purchaseForm.vendorId">${d.vendors.map((v) => `<option value="${v.id}" ${s.adm.purchaseForm.vendorId === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>
         <div class="form-field"><label for="pf-m">计量项</label><select class="input" id="pf-m" data-bind="adm.purchaseForm.meter">${Object.entries(METERS).map(([m, x]) => `<option value="${m}" ${s.adm.purchaseForm.meter === m ? 'selected' : ''}>${x.label}（${x.unit}）</option>`).join('')}</select></div>
-        <div class="form-field"><label for="pf-a">数量（负数为冲减）</label><input class="input" id="pf-a" type="number" data-bind="adm.purchaseForm.amount" value="${esc(s.adm.purchaseForm.amount)}" /></div>
+        <div class="form-field"><label for="pf-a">数量（负数为冲减）</label><input class="input" id="pf-a" type="number" data-bind="adm.purchaseForm.amount" data-validate="purchase" aria-required="true" value="${esc(s.adm.purchaseForm.amount)}" /></div>
         <div class="form-field"><label for="pf-n">采购单号 / 备注</label><input class="input" id="pf-n" data-bind="adm.purchaseForm.note" value="${esc(s.adm.purchaseForm.note)}" /></div>
         <div class="form-field form-field--btn"><button class="btn btn--primary" type="submit" ${s.adm.purchaseForm.busy ? 'disabled' : ''}>登记入账</button></div>
       </form>${s.adm.purchaseForm.error ? errorBlock(s.adm.purchaseForm.error) : ''}` : ''}
     </div>
     <form class="card" data-form="vendor" novalidate><div class="card__title"><h2>${f.id ? `编辑：${esc(f.name)}` : '添加厂商凭据'}</h2>${f.id ? '<button class="btn btn--sm" type="button" data-action="vendor-new">改为新增</button>' : ''}</div>
       <div class="form-grid">
-        <div class="form-field"><label for="vf-name">名称</label><input class="input" id="vf-name" data-bind="adm.vendorForm.name" value="${esc(f.name)}" placeholder="如：如影-主账号" /></div>
-        <div class="form-field"><label for="vf-base">平台地址</label><input class="input" id="vf-base" data-bind="adm.vendorForm.baseUrl" value="${esc(f.baseUrl)}" /></div>
-        <div class="form-field"><label for="vf-id">APP_ID</label><input class="input" id="vf-id" data-bind="adm.vendorForm.appId" value="${esc(f.appId)}" autocomplete="off" placeholder="${f.id ? '留空表示不修改' : ''}" /></div>
-        <div class="form-field"><label for="vf-key">APP_KEY</label><input class="input" id="vf-key" type="password" data-bind="adm.vendorForm.appKey" value="${esc(f.appKey)}" autocomplete="new-password" placeholder="${f.id ? '留空表示不修改' : ''}" /></div>
+        <div class="form-field"><label for="vf-name">名称</label><input class="input" id="vf-name" data-bind="adm.vendorForm.name" data-validate="vendor" aria-required="true" value="${esc(f.name)}" placeholder="如：如影-主账号" /></div>
+        <div class="form-field"><label for="vf-base">平台地址</label><input class="input" id="vf-base" data-bind="adm.vendorForm.baseUrl" data-validate="vendor" value="${esc(f.baseUrl)}" placeholder="留空使用默认地址" /></div>
+        <div class="form-field"><label for="vf-id">APP_ID</label><input class="input" id="vf-id" data-bind="adm.vendorForm.appId" data-validate="vendor" ${f.id ? '' : 'aria-required="true"'} value="${esc(f.appId)}" autocomplete="off" placeholder="${f.id ? '留空表示不修改' : ''}" /></div>
+        <div class="form-field"><label for="vf-key">APP_KEY</label><input class="input" id="vf-key" type="password" data-bind="adm.vendorForm.appKey" data-validate="vendor" ${f.id ? '' : 'aria-required="true"'} value="${esc(f.appKey)}" autocomplete="new-password" placeholder="${f.id ? '留空表示不修改' : ''}" /></div>
         <div class="form-field"><label for="vf-qid">TTS 音色 QID（可选）</label><input class="input" id="vf-qid" data-bind="adm.vendorForm.ttsQid" value="${esc(f.ttsQid)}" /></div>
-        <div class="form-field"><label for="vf-img">数字人形象图地址（可选）</label><input class="input" id="vf-img" data-bind="adm.vendorForm.avatarImageUrl" value="${esc(f.avatarImageUrl)}" placeholder="https://…" /></div>
+        <div class="form-field"><label for="vf-img">数字人形象图地址（可选）</label><input class="input" id="vf-img" data-bind="adm.vendorForm.avatarImageUrl" data-validate="vendor" value="${esc(f.avatarImageUrl)}" placeholder="https://…" /></div>
         <div class="form-field"><label for="vf-note">备注（可选）</label><input class="input" id="vf-note" data-bind="adm.vendorForm.note" value="${esc(f.note)}" /></div>
       </div>
       ${f.error ? errorBlock(f.error) : ''}
@@ -786,7 +789,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitLogin() {
     const f = state.auth;
-    if (!f.username.trim() || !f.password) { f.error = { message: '请输入用户名和密码。', action: 'fix' }; return render(); }
+    { const errs = validateLogin(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['login-user', 'login-pass']); return; } }
     f.busy = true; f.error = null; render();
     try {
       state.me = await api.login(f.username.trim(), f.password);
@@ -800,7 +803,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitPassword() {
     const f = state.pw;
-    if (f.next !== f.again) { f.error = { message: '两次输入的新密码不一致。', action: 'fix' }; return render(); }
+    { const errs = validatePassword(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['pw-old', 'pw-new', 'pw-again']); return; } }
     f.busy = true; f.error = null; render();
     try {
       state.me = await api.changePassword(f.old, f.next);
@@ -814,6 +817,8 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitTenant() {
     const f = A().form;
+    { const errs = validateTenant(f, !f.id); const ids = ['tf-name', 'tf-max', 'tf-start', 'tf-end', 'tf-modules', ...(f.id ? [] : ['tf-admin'])];
+      if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ids); toast(summaryText(errs), 'err'); return; } }
     const body = { name: f.name, contact: f.contact, orgType: f.orgType || 'enterprise', plan: f.plan, startsDay: f.startsDay, expiresDay: f.expiresDay, maxUsers: Number(f.maxUsers), modules: f.modules, allowReal: !!f.allowReal, allowBillable: !!f.allowBillable, vendorId: f.vendorId || null, note: f.note };
     if (f.id) body.status = f.status;
     else body.admin = { username: f.adminUsername.trim(), displayName: f.adminDisplayName.trim() };
@@ -832,6 +837,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitUser(scope) {
     const f = A().userForm;
+    { const errs = validateUserCreate(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['nu-name', 'nu-display']); return; } }
     f.busy = true; f.error = null; render();
     const body = { username: f.username.trim(), displayName: f.displayName.trim(), role: f.role };
     if (f.classId && f.role === 'member') body.classId = f.classId;
@@ -849,7 +855,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     const { userAct: act, id, scope, name } = el.dataset;
     const ns = scope === 'admin' ? api.admin : api.org;
     const confirmText = { reset: `重置 ${name} 的密码？对方会立即下线，需要用新的初始密码登录。`, disable: `停用 ${name}？对方会立即下线且无法登录。`, delete: `删除账号 ${name}？此操作不可恢复（历史日志会保留）。`, promote: `把 ${name} 设为管理员？`, demote: `把 ${name} 改为普通成员？` }[act];
-    if (confirmText && !window.confirm(confirmText)) return;
+    if (confirmText && !(await askConfirm(confirmText, { title: { reset: '重置密码', disable: '停用账号', delete: '删除账号', promote: '设为管理员', demote: '改为普通成员' }[act] || '请确认', okText: { reset: '重置', disable: '停用', delete: '删除', promote: '设为管理员', demote: '改为成员' }[act] || '确定', danger: act === 'delete' || act === 'disable' || act === 'reset' }))) return;
     try {
       if (act === 'reset') { const r = await ns.resetPassword(id); state.dialog = { type: 'cred', title: `已重置 ${r.username} 的密码`, username: r.username, password: r.initialPassword }; }
       else if (act === 'delete') { await ns.deleteUser(id); toast('已删除'); }
@@ -864,6 +870,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
   async function submitImport(scope) {
     const f = A().importForm;
     const rows = parseRoster(f.text);
+    { const errs = validateImport(f, rows, { school: isSchool(state) }); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['imp-text', 'imp-prefix']); return; } }
     f.busy = true; f.error = null; render();
     const body = { prefix: f.prefix.trim(), role: f.role, rows };
     try {
@@ -878,6 +885,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitClass() {
     const f = A().classForm;
+    { const errs = validateClass(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['cf-name']); return; } }
     f.busy = true; f.error = null; render();
     try {
       await api.org.createClass({ name: f.name.trim(), teacherId: f.teacherId || null });
@@ -893,11 +901,11 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     if (act === 'review') { A().teach.classId = id; A().teach.status = ''; return; } // 跳转由链接完成
     try {
       if (act === 'rename') {
-        const next = window.prompt('班级新名称', name);
+        const next = await askPrompt('班级新名称', { title: '重命名班级', value: name, validate: (v) => (v.trim() ? '' : '班级名称不能为空') });
         if (next === null || next.trim() === name) return;
         await api.org.updateClass(id, { name: next.trim() }); toast('已改名');
       } else if (act === 'delete') {
-        if (!window.confirm(`删除班级「${name}」？${Number(el.dataset.count) ? `班里的 ${el.dataset.count} 名学生会变为未分班；` : ''}已提交的作品与成绩会保留。`)) return;
+        if (!(await askConfirm(`删除班级「${name}」？${Number(el.dataset.count) ? `班里的 ${el.dataset.count} 名学生会变为未分班；` : ''}已提交的作品与成绩会保留。`, { title: '删除班级', okText: '删除', danger: true }))) return;
         await api.org.deleteClass(id); toast('已删除班级');
       }
       A().orgClasses = await api.org.classes();
@@ -930,8 +938,12 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     if (d.userRole !== undefined) {
       const ns = d.scope === 'admin' ? api.admin : api.org;
       const label = el.options[el.selectedIndex]?.textContent || el.value;
-      if (!window.confirm(`把 ${d.name} 设为「${label}」？${d.current === 'teacher' ? '对方将不再是任何班级的任课教师。' : ''}`)) { el.value = d.current; return true; }
-      run(() => ns.updateUser(d.id, el.value === 'member' ? { role: el.value } : { role: el.value, classId: null }), '已更新', () => reloadUsers(d.scope));
+      const nextRole = el.value;
+      (async () => {
+        const ok = await askConfirm(`把 ${d.name} 设为「${label}」？${d.current === 'teacher' ? '对方将不再是任何班级的任课教师。' : ''}`, { title: '修改角色', okText: '确认修改' });
+        if (!ok) { el.value = d.current; return; }
+        run(() => ns.updateUser(d.id, nextRole === 'member' ? { role: nextRole } : { role: nextRole, classId: null }), '已更新', () => reloadUsers(d.scope));
+      })();
       return true;
     }
     if (d.userClass !== undefined) {
@@ -949,6 +961,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitVendor() {
     const f = A().vendorForm;
+    { const errs = validateVendor(f, !!f.id); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['vf-name', 'vf-base', 'vf-id', 'vf-key', 'vf-img']); return; } }
     f.busy = true; f.error = null; render();
     const body = { name: f.name, baseUrl: f.baseUrl, appId: f.appId, appKey: f.appKey, ttsQid: f.ttsQid, avatarImageUrl: f.avatarImageUrl, note: f.note };
     try {
@@ -968,7 +981,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
       render(); document.getElementById('vf-name')?.focus(); return;
     }
     if (act === 'delete') {
-      if (!window.confirm(`删除厂商凭据「${name}」？`)) return;
+      if (!(await askConfirm(`删除厂商凭据「${name}」？`, { title: '删除厂商凭据', okText: '删除', danger: true }))) return;
       try { await api.admin.deleteVendor(id); toast('已删除'); A().vendors = await api.admin.vendors(); } catch (e) { const err = toApiError(e); toast(`${err.message} ${err.hint || ''}`); }
       return render();
     }
@@ -1005,13 +1018,15 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     'vendor-new': () => { A().vendorForm = emptyVendorForm(); render(); },
     'tenant-delete': async () => {
       const f = A().form;
-      if (window.prompt(`删除客户会同时删除它的全部账号，且不可恢复。请输入客户名称「${f.name}」确认：`) !== f.name) return toast('名称不一致，未删除');
+      const typed = await askPrompt(`删除客户会同时删除它的全部账号，且不可恢复。\n请输入客户名称「${f.name}」确认：`, { title: '删除客户', okText: '永久删除', danger: true, placeholder: f.name, validate: (v) => (v === f.name ? '' : '名称不一致，请核对后重新输入') });
+      if (typed === null) return;
       try { await api.admin.deleteTenant(f.id); toast('已删除客户'); go('admin/tenants'); } catch (e) { toast(toApiError(e).message); }
     },
   };
 
   async function submitKey(el) {
     const f = A().keyForm; const scope = el.dataset.scope;
+    { const errs = validateKey(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['kf-name', 'kf-exp']); return; } }
     f.busy = true; f.error = null; render();
     try {
       const body = { name: f.name.trim(), expiresDay: f.expiresDay || undefined };
@@ -1025,6 +1040,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitQuota() {
     const f = A().quotaForm; const id = A().tenant.tenant.id;
+    { const errs = validateQuota(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['qf-amt']); return; } }
     f.busy = true; f.error = null; render();
     try {
       await api.admin.quota(id, { op: f.op, meter: f.meter, amount: Number(f.amount), note: f.note });
@@ -1037,6 +1053,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function submitPurchase() {
     const f = A().purchaseForm;
+    { const errs = validatePurchase(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['pf-a']); return; } }
     f.busy = true; f.error = null; render();
     try {
       const vendorId = f.vendorId || A().vendors?.vendors?.[0]?.id; // 下拉框默认显示第一项
@@ -1051,7 +1068,7 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
 
   async function revokeKey(el) {
     const { keyRevoke: id, scope, name } = el.dataset;
-    if (!window.confirm(`吊销密钥「${name}」？使用它的系统会立即无法调用。`)) return;
+    if (!(await askConfirm(`吊销密钥「${name}」？使用它的系统会立即无法调用。`, { title: '吊销密钥', okText: '吊销', danger: true }))) return;
     try {
       if (scope === 'admin') { await api.admin.revokeKey(id); A().tenant = await api.admin.tenant(A().tenant.tenant.id); }
       else { await api.org.revokeKey(id); A().orgKeys = await api.org.keys(); }
@@ -1088,4 +1105,20 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
   }
 
   return { enter, actions, forms, click, change, loadLogs };
+}
+
+/** 失焦/输入时的单字段校验入口（main.js 调用）：返回 { ids, errors } */
+export function liveValidate(kind, state) {
+  const A_ = state.adm || {};
+  if (kind === 'login') return { ids: ['login-user', 'login-pass'], errors: validateLogin(state.auth) };
+  if (kind === 'pw') return { ids: ['pw-old', 'pw-new', 'pw-again'], errors: validatePassword(state.pw) };
+  if (kind === 'tenant') { const f = A_.form; return f ? { ids: ['tf-name', 'tf-max', 'tf-start', 'tf-end', 'tf-modules', ...(f.id ? [] : ['tf-admin'])], errors: validateTenant(f, !f.id) } : null; }
+  if (kind === 'user') return A_.userForm ? { ids: ['nu-name', 'nu-display'], errors: validateUserCreate(A_.userForm) } : null;
+  if (kind === 'import') return A_.importForm ? { ids: ['imp-text', 'imp-prefix'], errors: validateImport(A_.importForm, parseRoster(A_.importForm.text), { school: isSchool(state) }) } : null;
+  if (kind === 'class') return A_.classForm ? { ids: ['cf-name'], errors: validateClass(A_.classForm) } : null;
+  if (kind === 'key') return A_.keyForm ? { ids: ['kf-name', 'kf-exp'], errors: validateKey(A_.keyForm) } : null;
+  if (kind === 'quota') return A_.quotaForm ? { ids: ['qf-amt'], errors: validateQuota(A_.quotaForm) } : null;
+  if (kind === 'purchase') return A_.purchaseForm ? { ids: ['pf-a'], errors: validatePurchase(A_.purchaseForm) } : null;
+  if (kind === 'vendor') return A_.vendorForm ? { ids: ['vf-name', 'vf-base', 'vf-id', 'vf-key', 'vf-img'], errors: validateVendor(A_.vendorForm, !!A_.vendorForm.id) } : null;
+  return null;
 }
