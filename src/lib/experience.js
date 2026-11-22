@@ -50,7 +50,7 @@ function requiresCard(ex, cfg) {
   return `<div class="card"><div class="card__title"><h2>开始之前</h2><span class="pill pill--info">按顺序准备，不容易跑一半失败</span></div>
     <ol class="req-list">${reqs.map((rq) => {
       const target = rq.cap ? capById(rq.cap) : null;
-      return `<li><b>${esc(rq.text)}</b>${configStatus(cfg, rq.config)}${rq.note ? `<span class="muted"> ${esc(rq.note)}</span>` : ''}${target ? ` <a class="btn btn--sm" href="#experience/${esc(target.id)}" data-view="experience">去${esc(target.name)}</a>` : ''}</li>`;
+      return `<li><div class="req-list__head"><b>${esc(rq.text)}</b>${configStatus(cfg, rq.config)}${target ? `<a class="btn btn--sm" href="#experience/${esc(target.id)}" data-view="experience">去${esc(target.name)}</a>` : ''}</div>${rq.note ? `<span class="muted">${esc(rq.note)}</span>` : ''}</li>`;
     }).join('')}</ol></div>`;
 }
 

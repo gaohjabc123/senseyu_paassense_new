@@ -332,7 +332,9 @@ main:focus { outline: none; }
 .default-avatar-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; border: 1px solid var(--gray-200); }
 .cell-needs { line-height: 1.6; }
 .req-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.7; }
-.req-list .btn { margin-left: 8px; }
+.req-list li { display: flex; flex-direction: column; gap: 4px; }
+.req-list__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.req-list__head .btn { margin-left: auto; }
 .next-steps { margin-top: var(--sp-4); align-items: center; }
 .guided-path { margin-bottom: var(--sp-4); }
 .guided-path .steps-grid { grid-template-columns: repeat(5, 1fr); }
