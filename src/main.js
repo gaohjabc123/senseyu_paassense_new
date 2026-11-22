@@ -86,7 +86,6 @@ const app = document.getElementById('app');
 app.innerHTML = `<a class="skip-link" href="#main" data-skip>跳到主要内容</a>
   ${V.topbarHtml()}
   <div id="view-root" class="view-root"></div>
-  ${V.footerHtml()}
   <div id="overlay-root"></div>`;
 const viewRoot = document.getElementById('view-root');
 const overlayRoot = document.getElementById('overlay-root');
@@ -141,8 +140,8 @@ function render() {
   const banner = state.configError ? `<div class="page-banner">${V.errorBlock(state.configError, { retry: 'reload-config' })}</div>` : accessNote ? `<div class="page-banner">${accessNote}</div>` : '';
   viewRoot.className = `view-root ${isSite ? 'view-root--site' : 'view-root--console'}`;
   viewRoot.innerHTML = isSite
-    ? `<main id="main" tabindex="-1" class="site-main">${banner}${pageHtml()}</main>`
-    : `<div class="console-shell${state.navCollapsed ? ' nav-collapsed' : ''}">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${isSitePageNow ? '' : V.consoleBar(state, CONSOLE_TITLE[state.view] || adminTitle(state.view) || '工作台')}${pageHtml()}</main></div>`;
+    ? `<main id="main" tabindex="-1" class="site-main">${banner}${pageHtml()}${V.footerHtml()}</main>`
+    : `<div class="console-shell${state.navCollapsed ? ' nav-collapsed' : ''}">${V.sidenav(state)}<main id="main" tabindex="-1" class="console-main">${banner}${isSitePageNow ? '' : V.consoleBar(state, CONSOLE_TITLE[state.view] || adminTitle(state.view) || '工作台')}${pageHtml()}${V.footerHtml()}</main></div>`;
 
   overlayRoot.innerHTML = state.dialog?.type === 'cred' ? credentialDialog(state.dialog)
     : state.dialog?.type === 'mode' ? V.modeDialog(state)
