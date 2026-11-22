@@ -119,7 +119,7 @@ main:focus { outline: none; }
 .page-body { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--sp-6); }
 .site--inner { padding-bottom: var(--sp-16); }
 
-.cap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); }
+.cap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); align-items: start; }
 .cap-card { display: block; text-align: left; padding: var(--sp-6); border-radius: var(--radius-lg); border: 1px solid var(--gray-200); background: #fff;
   transition: box-shadow var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease); }
 .cap-card:hover { box-shadow: var(--shadow-2); border-color: var(--accent, var(--brand-400)); }
@@ -169,7 +169,10 @@ main:focus { outline: none; }
 .cta__actions { display: flex; justify-content: center; gap: var(--sp-3); flex-wrap: wrap; }
 
 /* ============ 能力表 ============ */
-.filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--sp-5); }
+.filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--sp-5); align-items: center; }
+.filter-row .input { width: auto; }
+.filter-row input[type="search"] { flex: 1; min-width: 200px; }
+.filter-row label { display: inline-flex; align-items: center; gap: 6px; }
 .chip { padding: 6px 14px; border-radius: var(--radius-pill); border: 1px solid var(--gray-200); background: #fff; color: var(--gray-600); font-size: 13px; }
 .chip:hover { border-color: var(--brand-400); color: var(--brand-700); }
 .chip.is-on { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
@@ -178,12 +181,13 @@ main:focus { outline: none; }
 .cap-table td { font-size: 13px; }
 /* 能力表操作列与短标签不换行：按钮「体验」曾被挤成「体/验」两行，所属「视频合成」也被折成两行 */
 .cap-table td:last-child, .cap-table td:nth-child(2) { white-space: nowrap; }
+.cap-table td:first-child { white-space: nowrap; }
 .table td .btn { white-space: nowrap; }
 .cap-table b { color: var(--gray-900); }
 .tag { display: inline-block; white-space: nowrap; margin-left: 6px; font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--accent-50); color: var(--accent-600); font-weight: 600; }
 .muted { color: var(--gray-500); }
 .cell-scene { display: block; margin-top: 4px; color: var(--gray-500); font-size: 12px; }
-.code-sm { font-size: 11px; color: var(--brand-700); background: var(--brand-50); padding: 2px 6px; border-radius: 6px; overflow-wrap: anywhere; }
+.code-sm { font-size: 11px; color: var(--brand-700); background: var(--brand-50); padding: 2px 6px; border-radius: 6px; overflow-wrap: break-word; }
 .status { display: inline-block; padding: 3px 10px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .st-ready { background: var(--success-50); color: #047857; }
 .hint-block { margin-top: var(--sp-4); color: var(--gray-500); font-size: 12px; line-height: 1.7; }
@@ -195,7 +199,7 @@ main:focus { outline: none; }
 .kpi b { font-size: var(--text-2xl); letter-spacing: -.8px; }
 .kpi__mode { font-size: var(--text-xl) !important; }
 .kpi small { font-size: 12px; color: var(--gray-500); }
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-bottom: var(--sp-4); align-items: start; }
 .grid-2 > .card { margin-bottom: 0; }
 .card { margin-bottom: var(--sp-4); min-width: 0; }
 .card__foot-btn { margin-top: var(--sp-4); }
@@ -231,7 +235,8 @@ main:focus { outline: none; }
 .editor:disabled, .input:disabled { opacity: .7; cursor: not-allowed; }
 .input:focus { box-shadow: 0 0 0 3px var(--brand-100); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
-.form-field { min-width: 0; }
+.form-field { min-width: 0; margin-bottom: var(--sp-4); }
+.form-grid .form-field, .exp-form-grid .form-field, .toolbar .form-field { margin-bottom: 0; }
 .form-field label { display: block; font-size: 12px; color: var(--gray-600); margin-bottom: 5px; font-weight: 550; }
 .card__title label { cursor: pointer; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--sp-4); }
@@ -275,6 +280,8 @@ main:focus { outline: none; }
 .dropzone span { font-size: 12px; color: var(--gray-500); }
 .dropzone:hover, .dropzone.is-drag { border-color: var(--brand-500); background: var(--brand-50); }
 .dropzone:focus-within { outline: 2px solid var(--brand-500); outline-offset: 2px; }
+/* 必须盖过 .form-field label 的 display:block（(0,1,1) 高于 .dropzone 的 (0,1,0)，曾导致 b/span 挤在一行粘连） */
+.form-field label.dropzone { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .upload-list { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: 6px; }
 .upload-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--gray-50); }
 .upload-item__name { font-weight: 600; overflow-wrap: anywhere; }
@@ -357,7 +364,7 @@ main:focus { outline: none; }
 .mode-card b { font-size: 14px; }
 .mode-card span { font-size: 12px; color: var(--gray-500); }
 .kv-table th { width: 120px; color: var(--gray-500); font-weight: 500; text-transform: none; font-size: 13px; letter-spacing: 0; }
-.kv-table td { overflow-wrap: anywhere; }
+.kv-table td { overflow-wrap: break-word; }
 .kv-table tbody tr:hover { background: transparent; }
 
 /* ============ 覆盖层 ============ */
@@ -511,7 +518,7 @@ main:focus { outline: none; }
 .bar-list li { display: grid; grid-template-columns: 140px 1fr 48px; align-items: center; gap: 10px; font-size: 13px; }
 .bar-list i { display: block; height: 8px; width: var(--w); min-width: 4px; border-radius: 99px; background: var(--brand-500); }
 .bar-list b { text-align: right; }
-.cred-table code { font-size: 13px; word-break: break-all; }
+.cred-table code { font-size: 13px; overflow-wrap: break-word; }
 .cred-pass { font-size: 16px !important; letter-spacing: .06em; color: var(--brand-800); background: var(--brand-50); padding: 2px 8px; border-radius: 6px; }
 @media (max-width: 720px) {
   .user-chip__text { display: none; }

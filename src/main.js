@@ -19,6 +19,8 @@ import { routeKey, pushNav, popNav } from './lib/navstack.js';
 import { initialAdminState, parseAdminHash, renderAdminRoute, ADMIN_ROUTES, credentialDialog, createAdminController, liveValidate } from './lib/admin.js';
 
 const SAMPLE_TEXT = '新款智能手表今天上市，支持全天心率监测、睡眠分析与运动记录，轻巧续航七天，欢迎到店体验。';
+/** 作品标题：取前 20 字，超长补省略号，避免硬截在“与/的”等字上看着像断句 */
+const shortTitle = (t, fallback) => { const v = String(t || '').trim(); return v ? (v.length > 20 ? v.slice(0, 20) + '…' : v) : fallback; };
 const MAX_UPLOAD_BYTES = 1024 * 1024;
 
 /** 过渡视频 / 预热素材「查状态 + 批量删除」区的初始状态（挂在 state.exp 下，随体验页切换重置） */
@@ -977,7 +979,7 @@ function rememberResult(capId, result) {
  * 返回 true 表示新存了一条；已存在（去重）或不满足条件返回 false。 */
 async function autoSaveVideo(result, text, taskId = '') {
   if (!result || result.mode !== 'real' || !result.videoUrl) return false;
-  const r = await saveWork({ kind: 'video', type: '视频口播', title: String(text || '').slice(0, 20) || '视频口播', url: result.videoUrl, duration: result.duration, mode: result.mode, taskId });
+  const r = await saveWork({ kind: 'video', type: '视频口播', title: shortTitle(text, '视频口播'), url: result.videoUrl, duration: result.duration, mode: result.mode, taskId });
   return r.ok && !r.duplicate;
 }
 
@@ -1281,12 +1283,12 @@ const actions = {
   'resume-video': resumeVideo,
   'save-video': async (btn) => {
     const r = state.video.result; if (!r) return;
-    saved(await saveWork({ kind: 'video', type: '视频口播', title: state.video.text.slice(0, 20), url: r.videoUrl, duration: r.duration, mode: r.mode, taskId: state.video.taskId || '' }), btn);
+    saved(await saveWork({ kind: 'video', type: '视频口播', title: shortTitle(state.video.text, '视频口播'), url: r.videoUrl, duration: r.duration, mode: r.mode, taskId: state.video.taskId || '' }), btn);
   },
   'run-voice': runVoice,
   'save-voice': async (btn) => {
     const r = state.voice.result; if (!r) return;
-    saved(await saveWork({ kind: 'audio', type: '语音合成', title: state.voice.text.slice(0, 20), url: r.audio_url, duration: r.duration_ms / 1000, mode: r.mode }), btn);
+    saved(await saveWork({ kind: 'audio', type: '语音合成', title: shortTitle(state.voice.text, '语音合成'), url: r.audio_url, duration: r.duration_ms / 1000, mode: r.mode }), btn);
   },
   'kb-reload': () => loadKb(true),
   'chat-send': () => sendChat(),

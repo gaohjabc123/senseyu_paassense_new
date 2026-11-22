@@ -403,7 +403,7 @@ export const CAPABILITIES = [
       ],
       fields: [
         { key: 'name', label: '知识库名称', type: 'text', default: '人工智能通识' },
-        { key: 'docUrl', label: '资料文档 URL', type: 'text', default: 'https://cdn.example.com/course.pdf', upload: 'doc', hint: '仅支持 txt/md；点右侧「上传」可直接传本站文档，或填可公网访问的文档地址' },
+        { key: 'docUrl', label: '资料文档 URL', type: 'text', default: 'https://cdn.example.com/course.txt', upload: 'doc', hint: '仅支持 txt/md；点右侧「上传」可直接传本站文档，或填可公网访问的文档地址' },
         { key: 'desc', label: '知识库说明', type: 'textarea', default: '面向学生的课程答疑资料' },
       ],
       notes: '平台没有知识库接口；真实模式把资料地址的文档（txt/md）下载后存进服务端自建知识库，供问答调用。',

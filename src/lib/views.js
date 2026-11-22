@@ -881,7 +881,7 @@ export function liveScriptsView(s) {
     ${ls.error ? errorBlock(ls.error, { retry: 'livescripts-reload' }) : ''}
     ${ls.tab === 'sessions' ? `<div class="card"><div class="card__title"><h2>直播会话</h2>
         <button class="btn btn--sm" type="button" data-action="livescripts-reload" ${ls.loading ? 'disabled aria-busy="true"' : ''}>${ls.loading ? '刷新中…' : '刷新'}</button></div>
-      <p class="hint-block">平台没有直播会话列表接口，这里只列本站创建过的直播会话（直播内测、超级直播间 Pro、视频互动直播）；${esc(ls.note || '')}</p>
+      <p class="hint-block">${esc(ls.note || '平台没有直播会话列表接口，这里只列本站创建过的直播会话。')}</p>
       ${ls.loading && !(ls.sessions || []).length ? skeletonBlock('正在读取会话…')
         : (ls.sessions || []).length ? `<div class="table-scroll"><table class="table"><thead><tr><th scope="col">名称</th><th scope="col">类型</th><th scope="col">会话编号</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">结束时间</th><th scope="col">直播时长</th><th scope="col">结束原因</th></tr></thead><tbody>${sessRows}</tbody></table></div>`
         : emptyState('还没有直播会话', '在「直播内测」或「视频互动直播测试」里创建一次直播间，这里就会出现记录。', '<a class="btn btn--primary btn--sm" href="#livetest" data-view="livetest">去直播内测</a>')}
