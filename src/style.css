@@ -182,6 +182,7 @@ main:focus { outline: none; }
 /* 能力表操作列与短标签不换行：按钮「体验」曾被挤成「体/验」两行，所属「视频合成」也被折成两行 */
 .cap-table td:last-child, .cap-table td:nth-child(2) { white-space: nowrap; }
 .cap-table td:first-child { white-space: nowrap; }
+.cap-table td[data-label="接口"] { min-width: 300px; }
 .table td .btn { white-space: nowrap; }
 .cap-table b { color: var(--gray-900); }
 .tag { display: inline-block; white-space: nowrap; margin-left: 6px; font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--accent-50); color: var(--accent-600); font-weight: 600; }

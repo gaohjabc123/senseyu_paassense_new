@@ -375,9 +375,14 @@ function workStatusPill(w) {
   return '';
 }
 
+/** 作品标题展示：旧版硬截 20 字无省略号（如“…监测与”），展示时补 …；新版已带 …，不重复。 */
+const workDisplayTitle = (w) => {
+  const t = String(w.title || '');
+  return t.length === 20 && !/[。！？…]$/.test(t) ? t + '…' : t;
+};
 function worksTable(list, { withDelete = false, canSubmit = false } = {}) {
   return `<ul class="work-list">${list.map((w) => `<li class="work-item">
-      <div class="work-item__main"><span class="work-item__title"><b>${esc(w.title)}</b>${workStatusPill(w)}</span>
+      <div class="work-item__main"><span class="work-item__title"><b>${esc(workDisplayTitle(w))}</b>${workStatusPill(w)}</span>
         <span class="work-item__meta">${esc(w.type)} · ${w.mode === 'real' ? '真实环境' : '演示样例'} · ${esc(w.createdAt)}${w.remote ? '' : ` · 剩余 ${w.days} 天`}</span>
         ${w.review?.comment ? `<span class="work-item__comment">评语：${esc(w.review.comment)}</span>` : ''}</div>
       <div class="work-item__actions">${workOpen(w)}${w.url && w.kind !== 'text' ? `<a class="btn btn--sm" href="${esc(w.url)}" download="${esc(downloadName(w, w.url, w.kind === 'audio' ? 'mp3' : w.kind === 'image' ? 'png' : 'mp4'))}">下载</a>` : ''}${withDelete ? `${
