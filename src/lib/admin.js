@@ -1044,26 +1044,31 @@ export function createAdminController({ state, render, toast, go, refreshMe }) {
     f.busy = true; f.error = null; render();
     try {
       await api.admin.quota(id, { op: f.op, meter: f.meter, amount: Number(f.amount), note: f.note });
-      toast(f.op === 'reclaim' ? '已回收到额度池' : '已分配给客户');
-      A().quotaForm = { ...f, amount: '', note: '', busy: false, error: null };
-      A().tenant = await api.admin.tenant(id);
-    } catch (e) { f.busy = false; f.error = toApiError(e); }
+    } catch (e) { f.busy = false; f.error = toApiError(e); render(); return; }
+    // 分配已成功：先报成功、清空表单；刷新客户详情失败不影响分配结果，只提示手动刷新
+    toast(f.op === 'reclaim' ? '已回收到额度池' : '已分配给客户');
+    A().quotaForm = { ...f, amount: '', note: '', busy: false, error: null };
     render();
+    try { A().tenant = await api.admin.tenant(id); render(); }
+    catch { toast('已分配成功，列表未及时更新，请手动刷新页面'); }
   }
 
   async function submitPurchase() {
     const f = A().purchaseForm;
     { const errs = validatePurchase(f); if (Object.keys(errs).length) { f.error = null; render(); applyErrors(document, errs, ['pf-a']); return; } }
     f.busy = true; f.error = null; render();
+    let vendorId;
     try {
-      const vendorId = f.vendorId || A().vendors?.vendors?.[0]?.id; // 下拉框默认显示第一项
+      vendorId = f.vendorId || A().vendors?.vendors?.[0]?.id; // 下拉框默认显示第一项
       if (!vendorId) throw { message: '请先添加厂商凭据。', action: 'fix' };
       await api.admin.purchase(vendorId, { meter: f.meter, amount: Number(f.amount), note: f.note });
-      toast('已登记入账');
-      A().purchaseForm = { ...f, vendorId, amount: '', note: '', busy: false, error: null };
-      A().vendors = await api.admin.vendors();
-    } catch (e) { f.busy = false; f.error = toApiError(e); }
+    } catch (e) { f.busy = false; f.error = toApiError(e); render(); return; }
+    // 入账已成功：先报成功、清空表单；刷新厂商列表失败不影响入账结果，只提示手动刷新
+    toast('已登记入账');
+    A().purchaseForm = { ...f, vendorId, amount: '', note: '', busy: false, error: null };
     render();
+    try { A().vendors = await api.admin.vendors(); render(); }
+    catch { toast('已登记入账，列表未及时更新，请手动刷新页面'); }
   }
 
   async function revokeKey(el) {

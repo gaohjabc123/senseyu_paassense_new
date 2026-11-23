@@ -48,10 +48,15 @@ export function createTenancy({ db, cfg, quota, log = () => {}, now = () => Date
 
   /* ---------------- 日志 ---------------- */
   function writeLog(e) {
-    q(`INSERT INTO logs (at, category, action, tenant_id, user_id, username, capability, mode, ok, code, duration_ms, detail, ip)
+    try {
+      q(`INSERT INTO logs (at, category, action, tenant_id, user_id, username, capability, mode, ok, code, duration_ms, detail, ip)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      now(), e.category || 'usage', e.action, e.tenantId ?? null, e.userId ?? null, e.username ?? null, e.capability ?? null,
-      e.mode ?? null, e.ok === false ? 0 : 1, e.code ?? null, e.durationMs ?? null, e.detail ? String(e.detail).slice(0, 300) : null, e.ip ?? null);
+        now(), e.category || 'usage', e.action, e.tenantId ?? null, e.userId ?? null, e.username ?? null, e.capability ?? null,
+        e.mode ?? null, e.ok === false ? 0 : 1, e.code ?? null, e.durationMs ?? null, e.detail ? String(e.detail).slice(0, 300) : null, e.ip ?? null);
+    } catch (err) {
+      // 日志写入失败绝不能反过来让业务操作报错：额度分配等操作已提交，审计日志写失败只记服务端日志，不向客户端报“操作失败”
+      log(`[日志] 写入失败 ${e.category || ''}/${e.action || ''}: ${err && err.message ? err.message : err}`);
+    }
   }
   const audit = (actor, action, detail, ip) => writeLog({ category: 'admin', action, tenantId: actor.tenant_id, userId: actor.id, username: actor.username, detail, ip });
 
