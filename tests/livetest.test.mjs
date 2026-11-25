@@ -137,7 +137,7 @@ const resourceResponse = { resourceConfig: {
   genTtsCharVoiceModelTotalQty: 3, genTtsCharVoiceModelUsageQty: 0,
   genVcModelTotalQty: 5, genVcModelUsageQty: 0,
   genEditImageTotalQty: 10, genEditImageUsageQty: 0,
-  videoInteractiveLiveTotalQty: 1, videoInteractiveLiveUsageQty: 0,
+  videoInteractiveLiveMaxConTasksTotalQty: 1,
 } };
 const ok = (data) => ({ ok: true, status: 200, text: async () => JSON.stringify({ code: 0, data }) });
 

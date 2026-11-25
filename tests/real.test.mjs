@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, pollUntilDone, KB_TEXT, SUPER, superClient, setupTenant, fund } from './helpers.mjs';
-import { normalizeDuration, normalizeAppearance, normalizeTask, TASK_STATUS_TEXT, VOICE_STATUS } from '../server/lib/ruying.mjs';
+import { normalizeDuration, normalizeAppearance, normalizeTask, normalizeVendorResource, TASK_STATUS_TEXT, VOICE_STATUS } from '../server/lib/ruying.mjs';
 import { hintOf, errorBody, E } from '../server/lib/errors.mjs';
 import { speakable } from '../src/lib/tts.js';
 
@@ -20,7 +20,7 @@ let resourceResponse = { resourceConfig: {
   genTtsCharVoiceModelTotalQty: 3, genTtsCharVoiceModelUsageQty: 0,
   genVcModelTotalQty: 5, genVcModelUsageQty: 0,
   genEditImageTotalQty: 10, genEditImageUsageQty: 0,
-  videoInteractiveLiveTotalQty: 1, videoInteractiveLiveUsageQty: 0,
+  videoInteractiveLiveMaxConTasksTotalQty: 1,
 } };
 // 任务 id -> task/info 返回的记录（按平台口径：productParam 为 JSON 串）
 const TASK_RESULTS = {
@@ -111,6 +111,33 @@ before(async () => {
   s = t.admin;
 });
 after(async () => { await srv.close(); });
+
+test('厂商额度规整：视频互动直播按并发路数读 MaxConTasks 字段（2026-11-25 实测）', () => {
+  // 真实响应（2026-11-25 11:29 拉取）里没有 videoInteractiveLiveTotalQty /
+  // videoInteractiveLiveUsageQty，只有 videoInteractiveLiveMaxConTasksTotalQty: 1；
+  // 按旧映射会读成 0 路未开通。另两档：未开通（0）与字段缺失时均应为 0。
+  const real = { resourceConfig: {
+    genVideoDurationTotalQty: 50, genVideoDurationUsageQty: 0.76,
+    genImageVideoDurationTotalQty: 320, genImageVideoDurationUsageQty: 159.28,
+    liveDurationTotalQty: 100, liveDurationUsageQty: 0,
+    genTakeoverVideoDurationTotalQty: 100, genTakeoverVideoDurationUsageQty: 0,
+    genCharModelTotalQty: 3, genCharModelUsageQty: 0,
+    genTtsCharVoiceModelTotalQty: 3, genTtsCharVoiceModelUsageQty: 0,
+    genVcModelTotalQty: 5, genVcModelUsageQty: 0,
+    genEditImageTotalQty: 20, genEditImageUsageQty: 1,
+    videoInteractiveLiveMaxConTasksTotalQty: 1,
+  } };
+  const v = normalizeVendorResource(real).find((x) => x.key === 'videoInteractiveLive');
+  assert.deepEqual(v, { key: 'videoInteractiveLive', label: '视频互动直播并发', unit: '路', allocated: 1, used: 0, remaining: 1 });
+  const zero = normalizeVendorResource({ resourceConfig: { videoInteractiveLiveMaxConTasksTotalQty: 0 } }).find((x) => x.key === 'videoInteractiveLive');
+  assert.equal(zero.allocated, 0);
+  assert.equal(zero.remaining, 0);
+  const absent = normalizeVendorResource({ resourceConfig: {} }).find((x) => x.key === 'videoInteractiveLive');
+  assert.equal(absent.allocated, 0);
+  // 其他按时长/数量计费的项仍按 TotalQty/UsageQty 读
+  const img = normalizeVendorResource(real).find((x) => x.key === 'genImageVideoDuration');
+  assert.deepEqual(img, { key: 'genImageVideoDuration', label: '图片数字人', unit: '秒', allocated: 320, used: 159.28, remaining: 160.72 });
+});
 
 test('duration 规整为整数秒且至少 5 秒', () => {
   assert.equal(normalizeDuration(3.2), 5);
@@ -717,7 +744,7 @@ test('厂商额度预检：图片数字人额度超支时报明确的错，不�
       genTtsCharVoiceModelTotalQty: 3, genTtsCharVoiceModelUsageQty: 0,
       genVcModelTotalQty: 5, genVcModelUsageQty: 0,
       genEditImageTotalQty: 10, genEditImageUsageQty: 0,
-      videoInteractiveLiveTotalQty: 1, videoInteractiveLiveUsageQty: 0,
+      videoInteractiveLiveMaxConTasksTotalQty: 1,
     } };
   }
 });

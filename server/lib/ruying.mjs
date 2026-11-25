@@ -210,7 +210,11 @@ export function normalizeTask(t, fallbackId) {
 /** 厂商实时额度规整：把平台 resource 接口的字段映射成前端可渲染的条目数组。
  * 每项 { key, label, unit, allocated, used, remaining }；allocated 为 0 表示未开通。
  * 平台真实结构是 data.resourceConfig，下挂 {base}TotalQty / {base}UsageQty；
- * 用量可能是小数，remaining 保留两位小数。 */
+ * 用量可能是小数，remaining 保留两位小数。
+ * 例外：视频互动直播按并发路数计费，响应里没有 videoInteractiveLiveTotalQty /
+ * videoInteractiveLiveUsageQty，只有 videoInteractiveLiveMaxConTasksTotalQty
+ *（最大并发任务数 = 路数，2026-11-25 实测为 1）；该项改读 MaxConTasks 字段，
+ * 无 UsageQty 时 used 记 0、remaining 即路数。 */
 export function normalizeVendorResource(data = {}) {
   const rc = data?.resourceConfig || data || {};
   const FIELDS = [
@@ -222,12 +226,12 @@ export function normalizeVendorResource(data = {}) {
     { key: 'genTtsCharVoiceModel', label: 'TTS 音色模型', unit: '个' },
     { key: 'genVcModel', label: '音色克隆模型', unit: '个' },
     { key: 'genEditImage', label: 'AI 图片编辑', unit: '个' },
-    { key: 'videoInteractiveLive', label: '视频互动直播并发', unit: '路' },
+    { key: 'videoInteractiveLive', label: '视频互动直播并发', unit: '路', totalField: 'videoInteractiveLiveMaxConTasksTotalQty', usageField: null },
   ];
   const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
-  return FIELDS.map(({ key, label, unit }) => {
-    const allocated = round2(rc[`${key}TotalQty`]);
-    const used = round2(rc[`${key}UsageQty`]);
+  return FIELDS.map(({ key, label, unit, totalField, usageField }) => {
+    const allocated = round2(rc[totalField || `${key}TotalQty`]);
+    const used = usageField === null ? 0 : round2(rc[usageField || `${key}UsageQty`]);
     return { key, label, unit, allocated, used, remaining: round2(allocated - used) };
   });
 }
